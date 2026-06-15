@@ -2401,7 +2401,7 @@ export async function runCp(commandName = 'desktop') {
       localAppsCount = readdirSync(join(workspaceRoot, 'apps')).filter(d => !d.startsWith('.')).length
     } catch {}
     try {
-      localModulesCount = readdirSync(join(workspaceRoot, 'packages')).filter(d => !d.startsWith('.') && !d.startsWith('core') && !d.startsWith('nx') && !d.startsWith('kit-')).length
+      localModulesCount = readdirSync(join(workspaceRoot, 'packages')).filter(d => !d.startsWith('.') && !d.startsWith('core') && !d.startsWith('cli') && !d.startsWith('nx') && !d.startsWith('kit-')).length
     } catch {}
     try {
       localThemesCount = readdirSync(join(workspaceRoot, 'themes')).filter(d => !d.startsWith('.')).length

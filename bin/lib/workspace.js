@@ -11,6 +11,8 @@ export const SCOPE = '@owdproject/'
 /** Not loadable via desktop.config `modules` (core is the shell). */
 export const DESKTOP_NON_INSTALLABLE = new Set([
   '@owdproject/core',
+  '@owdproject/cli',
+  '@owdproject/nx',
 ])
 
 /** Installed documentation modules (current + deprecated package name). */
