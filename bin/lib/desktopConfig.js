@@ -5,4 +5,4 @@ export {
   resolveDesktopConfigPath,
   warnLegacyDesktopConfig,
   desktopConfigWritePath,
-} from '@owdproject/core/kit/authoring'
+} from '@owdproject/core/kit/authoring.ts'
