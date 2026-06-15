@@ -1,35 +1,43 @@
 {
   "name": "@owdproject/cli",
-  "version": "0.0.3",
-  "description": "The official CLI for Open Web Desktop",
+  "version": "0.1.0",
+  "description": "Control Panel and Command Line Interface for Open Web Desktop",
   "keywords": [
-    "cli",
-    "open-web-desktop",
     "owd",
-    "nuxt",
-    "owd-client",
-    "generator"
+    "desktop",
+    "cli",
+    "tui",
+    "control-panel"
   ],
+  "homepage": "https://github.com/owdproject/cli#readme",
+  "bugs": {
+    "url": "https://github.com/owdproject/cli/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/owdproject/cli.git"
+  },
   "license": "MIT",
   "author": {
-    "name": "dxlliv",
-    "url": "https://github.com/dxlliv"
+    "name": "Open Web Desktop Team",
+    "url": "https://github.com/owdproject"
   },
   "type": "module",
-  "main": "index.js",
   "bin": {
-    "owd": "./bin/owd.js"
+    "desktop": "bin/desktop.js",
+    "owd": "bin/owd.js"
   },
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
+  "files": [
+    "bin"
+  ],
   "dependencies": {
-    "chalk": "5.4.1",
-    "commander": "13.1.0",
-    "fs-extra": "11.3.0",
-    "gradient-string": "3.0.0",
-    "inquirer": "12.5.2",
-    "nuxi": "3.23.1",
-    "simple-git": "3.27.0"
+    "neo-blessed": "^0.2.0",
+    "cli-spinners": "^2.9.2",
+    "defu": "^6.1.4",
+    "getopts": "^2.3.0",
+    "log-symbols": "^4.1.0",
+    "mitt": "^3.0.1",
+    "nanoid": "^5.1.11",
+    "shellwords": "^1.1.1"
   }
 }
