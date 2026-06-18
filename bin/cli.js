@@ -1,4 +1,5 @@
-import { spawn } from 'node:child_process'
+import { spawn, execSync } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
 import { runDevForeground } from './lib/status.js'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
@@ -132,8 +133,29 @@ LEGACY (still supported)
 }
 
 async function openControlPanel(name) {
-  const { runCp } = await import('./cp.js')
-  await runCp(name)
+  const cliDir = join(fileURLToPath(import.meta.url), '..')
+  const goDir = join(cliDir, '../go')
+  const binaryPath = join(goDir, 'desktop-go')
+
+  // Compile the Go Control Panel if binary doesn't exist
+  if (!existsSync(binaryPath)) {
+    console.log('Go Control Panel binary not found. Compiling...')
+    try {
+      execSync('go build -o desktop-go .', { cwd: goDir, stdio: 'inherit' })
+      console.log('Go Control Panel compiled successfully!')
+    } catch (err) {
+      console.warn('Failed to compile Go Control Panel, falling back to legacy CP:', err.message)
+      const { runCp } = await import('./cp.js')
+      await runCp(name)
+      return
+    }
+  }
+
+  // Execute Go TUI
+  const child = spawn(binaryPath, [], { stdio: 'inherit' })
+  child.on('exit', (code) => {
+    process.exit(code ?? 0)
+  })
 }
 
 function fail(message, hint) {

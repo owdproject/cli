@@ -254,9 +254,9 @@ export async function loadCatalog(workspaceRoot, settings, options = {}) {
   const previousNames = readPreviousCatalogNames(workspaceRoot)
   const newDays = settings.catalogNewDays ?? 14
 
-  const cached = options.force ? null : readCache(workspaceRoot)
+  const cached = options.force ? null : readCacheFile(workspaceRoot)
   let remote = cached?.entries ?? null
-  let cacheAge = cached?.cacheAge ?? null
+  let cacheAge = cached?.fetchedAt ? formatCacheAge(cached.fetchedAt) : null
 
   if (!remote) {
     remote = []

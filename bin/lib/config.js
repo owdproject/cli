@@ -107,3 +107,24 @@ export function readDesktopDependencies(packageJsonPath) {
   const deps = { ...pkg.dependencies, ...pkg.devDependencies }
   return Object.keys(deps).filter((name) => name.startsWith(SCOPE))
 }
+
+export function writeDesktopDependencies(packageJsonPath, toAdd, toRemove) {
+  if (!existsSync(packageJsonPath)) return
+  const pkg = JSON.parse(readFileSync(packageJsonPath, 'utf8'))
+  if (!pkg.dependencies) pkg.dependencies = {}
+  
+  // Add dependencies
+  for (const [name, version] of Object.entries(toAdd)) {
+    pkg.dependencies[name] = version
+  }
+  
+  // Remove dependencies
+  for (const name of toRemove) {
+    delete pkg.dependencies[name]
+    if (pkg.devDependencies) {
+      delete pkg.devDependencies[name]
+    }
+  }
+  
+  writeFileSync(packageJsonPath, JSON.stringify(pkg, null, 2) + '\n')
+}

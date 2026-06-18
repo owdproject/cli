@@ -104,8 +104,8 @@ export const configs = [
     fsMounts: { '/mnt/test': '/test.zip' },
     copyTestZip: true,
     playgroundExtraDevDeps: {
-      '@owdproject/module-fs': '^0.0.4',
-      '@owdproject/module-persistence': '^0.0.2',
+      '@owdproject/module-fs': 'workspace:*',
+      '@owdproject/module-persistence': 'workspace:*',
     },
     launch: {
       file: 'launch-audioplayer.client.ts',
@@ -143,8 +143,8 @@ export const configs = [
     fsMounts: { '/mnt/test': '/test.zip' },
     copyTestZip: true,
     playgroundExtraDevDeps: {
-      '@owdproject/module-fs': '^0.0.4',
-      '@owdproject/module-persistence': '^0.0.2',
+      '@owdproject/module-fs': 'workspace:*',
+      '@owdproject/module-persistence': 'workspace:*',
     },
     dependencies: {
     },
@@ -154,6 +154,33 @@ export const configs = [
       dependsOn: 'desktop-app-explorer-register',
       appId: 'org.owdproject.explorer',
       command: 'explorer /mnt/test',
+    },
+    pagesYml: true,
+  },
+  {
+    path: 'apps/app-atproto',
+    slug: 'app-atproto',
+    name: '@owdproject/app-atproto',
+    moduleName: 'desktop-app-atproto',
+    version: '0.0.3',
+    playgroundTheme: '@owdproject/theme-win95',
+    playgroundModules: ['@owdproject/module-atproto'],
+    playgroundApps: ['@owdproject/app-terminal', '@owdproject/app-atproto'],
+    dependencies: {
+      '@owdproject/kit-tailwind': 'workspace:*',
+      '@owdproject/module-atproto': 'workspace:*',
+    },
+    playgroundExtraDevDeps: {
+      '@owdproject/module-atproto': 'workspace:*',
+      '@owdproject/theme-win95': 'workspace:*',
+      '@owdproject/app-terminal': 'workspace:*',
+    },
+    launch: {
+      file: 'launch-atproto.client.ts',
+      pluginName: 'app-atproto-playground-launch',
+      dependsOn: 'desktop-app-atproto-register',
+      appId: 'org.owdproject.atproto',
+      command: 'atproto',
     },
     pagesYml: true,
   },

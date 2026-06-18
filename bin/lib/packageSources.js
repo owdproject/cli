@@ -9,18 +9,22 @@ import { desktopMetaDir, fullName, SCOPE, KINDS, inferKind } from './workspace.j
  * @param {string} pkgShortName
  */
 export async function resolveForkUser(githubUser, pkgShortName) {
-  if (!githubUser || githubUser === 'owdproject') return 'owdproject'
+  if (!githubUser || githubUser === 'owdproject') return { exists: false, isFork: false }
 
   try {
     const res = await fetch(`https://api.github.com/repos/${githubUser}/${pkgShortName}`, {
       headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'owd-desktop-cli' },
     })
-    if (res.ok) return githubUser
+    if (res.ok) {
+      const data = await res.json()
+      // data.fork === true only if this repo was forked FROM another repo
+      return { exists: true, isFork: data.fork === true }
+    }
   } catch {
     /* ignore */
   }
 
-  return 'owdproject'
+  return { exists: false, isFork: false }
 }
 
 /**
@@ -205,9 +209,11 @@ export async function resolvePackageSources(shortName, settings, workspaceRoot, 
 
   let forkOwner = settings.githubUser && settings.githubUser !== 'owdproject' ? settings.githubUser : null
   let forkExists = false
+  let forkIsActualFork = false
   if (forkOwner) {
-    const resolved = await resolveForkUser(forkOwner, shortName)
-    forkExists = resolved === forkOwner
+    const result = await resolveForkUser(forkOwner, shortName)
+    forkExists = result.exists
+    forkIsActualFork = result.isFork
   }
 
   const local = workspaceRoot && hasLocalWorkspaceSource(workspaceRoot, pkgName)
@@ -222,8 +228,8 @@ export async function resolvePackageSources(shortName, settings, workspaceRoot, 
         htmlUrl: officialHtml,
         exists: Boolean(catalogEntry.htmlUrl || officialOwner),
       },
-      fork: forkOwner
-        ? { owner: forkOwner, exists: forkExists, htmlUrl: githubHtmlUrl(forkOwner, shortName) }
+      fork: forkOwner && forkExists
+        ? { owner: forkOwner, exists: forkExists, isFork: forkIsActualFork, htmlUrl: githubHtmlUrl(forkOwner, shortName) }
         : null,
     },
     local: local ? true : false,
@@ -325,29 +331,10 @@ export function buildSourceOptions(metadata, settings, sshAuth = {}) {
  */
 export async function enrichCatalogEntries(entries, workspaceRoot, settings) {
   const cache = readCacheFile(workspaceRoot)
-  const sshAuth = await detectGithubSshAuth(workspaceRoot)
-  const shortNames = entries.map((e) => e.shortName)
-  const missingNpm = shortNames.filter((s) => !cache?.packages?.[s]?.npm)
+  const sshAuth = getCachedSshAuth(workspaceRoot) ?? { available: false }
 
-  if (missingNpm.length > 0) {
-    const packages = { ...(cache?.packages ?? {}) }
-    for (const shortName of missingNpm.slice(0, 40)) {
-      const version = fetchLatestVersion(fullName(shortName), { optional: true })
-      packages[shortName] = {
-        ...(packages[shortName] ?? {}),
-        npm: version ? { version } : null,
-      }
-    }
-    writeCacheFile(workspaceRoot, {
-      fetchedAt: Date.now(),
-      sshAuth: cache?.sshAuth ?? sshAuth,
-      packages,
-    })
-  }
-
-  const freshCache = readCacheFile(workspaceRoot)
   return entries.map((entry) => {
-    const pkgMeta = freshCache?.packages?.[entry.shortName]
+    const pkgMeta = cache?.packages?.[entry.shortName]
     return {
       ...entry,
       trusted: isTrustedPublisher(entry, settings),
@@ -358,6 +345,7 @@ export async function enrichCatalogEntries(entries, workspaceRoot, settings) {
             owner: entry.org && entry.org !== 'workspace' ? entry.org : 'owdproject',
             htmlUrl: entry.htmlUrl ?? githubHtmlUrl(entry.org ?? 'owdproject', entry.shortName),
           },
+          fork: pkgMeta?.github?.fork ?? null,
         },
       },
     }

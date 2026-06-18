@@ -7,3 +7,6 @@ node_modules
 
 # Other
 package-lock.json
+
+# Go control panel binary (built by `go build -o desktop-go .`)
+go/desktop-go

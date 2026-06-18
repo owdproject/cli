@@ -126,7 +126,7 @@ function buildPackageJson(cfg, old) {
     '@nuxt/module-builder': '^1.0.2',
     '@nuxt/schema': '^4.3.0',
     '@owdproject/core': 'workspace:*',
-    '@owdproject/theme-nova': '0.0.1',
+    '@owdproject/theme-nova': 'workspace:*',
     nuxt: '^4.3.0',
     typescript: '~5.9.3',
     ...(cfg.devDependencies || {}),
@@ -172,7 +172,7 @@ function buildPlaygroundPkg(cfg) {
     nuxt: '^4.4.4',
     ...(cfg.playgroundExtraDevDeps || {}),
   }
-  if (!cfg.playgroundTheme) deps['@owdproject/theme-nova'] = '0.0.1'
+  if (!cfg.playgroundTheme) deps['@owdproject/theme-nova'] = 'workspace:*'
   if (cfg.playgroundTheme) deps[cfg.playgroundTheme] = 'workspace:*'
   return {
     name: `${cfg.name}-playground`,
@@ -253,10 +253,15 @@ jobs:
 
 function migrate(cfg) {
   const dir = join(ROOT, cfg.path)
+  const pkgPath = join(dir, 'package.json')
+  if (!existsSync(pkgPath)) {
+    console.warn('Skipping path without package.json:', cfg.path)
+    return
+  }
   const src = join(dir, 'src')
   mkdirSync(src, { recursive: true })
-  if (existsSync(join(dir, 'module.ts'))) renameSync(join(dir, 'module.ts'), join(src, 'module.ts'))
-  if (existsSync(join(dir, 'runtime'))) renameSync(join(dir, 'runtime'), join(src, 'runtime'))
+  if (existsSync(join(dir, 'module.ts')) && !existsSync(join(src, 'module.ts'))) renameSync(join(dir, 'module.ts'), join(src, 'module.ts'))
+  if (existsSync(join(dir, 'runtime')) && !existsSync(join(src, 'runtime'))) renameSync(join(dir, 'runtime'), join(src, 'runtime'))
 
   const registerName = `${cfg.moduleName}-register`
   const pluginPath = join(src, 'runtime/plugin.ts')
