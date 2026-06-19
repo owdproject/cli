@@ -1842,8 +1842,8 @@ func (m TuiModel) renderStatusBar(w int) string {
 
 	line1Parts := []string{
 		statusIcon + barKeyStyle.Render("Select packages") + barStyle.Render(" · "),
-		barStyle.Render("ᵘ updates · "),
-		barStyle.Render("ᵍ settings · "),
+		barKeyStyle.Render("u") + barStyle.Render(" updates · "),
+		barKeyStyle.Render("g") + barStyle.Render(" settings"),
 	}
 
 	var serverShortcut string
@@ -1857,8 +1857,6 @@ func (m TuiModel) renderStatusBar(w int) string {
 		spinFrames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 		spin := lipgloss.NewStyle().Foreground(colorCyan).Render(spinFrames[m.tickCount%len(spinFrames)])
 		line1Parts = []string{spin + " " + barStyle.Render(m.statusMsg)}
-	} else {
-		line1Parts = append(line1Parts, serverShortcut)
 	}
 
 	_ = mode
@@ -1961,17 +1959,24 @@ func (m TuiModel) renderModal() string {
 		content.WriteString(boldStyle.Render("Install source for ") + accentStyle.Render(pkg.ShortName) + "\n\n")
 		methods := m.getInstallMethods(pkg)
 		for i, mth := range methods {
-			if i > 0 && mth.Name != "local" && methods[i-1].Name == "local" {
-				content.WriteString("  " + subtleStyle.Render(strings.Repeat("─", 60)) + "\n")
+			if i > 0 {
+				if mth.Name != "local" && methods[i-1].Name == "local" {
+					content.WriteString("\n  " + subtleStyle.Render(strings.Repeat("─", 62)) + "\n\n")
+				} else {
+					content.WriteString("\n")
+				}
 			}
+			var btn string
 			if i == m.promptSel {
-				content.WriteString(modalOptionActive.Render(" "+mth.Label+" ") + "  " + mutedStyle.Render(mth.Desc))
+				btn = modalOptionActive.Render("[ " + mth.Label + " ]")
 			} else {
-				content.WriteString(modalOptionInactive.Render(" "+mth.Label+" ") + "  " + mutedStyle.Render(mth.Desc))
+				btn = modalOptionInactive.Render("[ " + mth.Label + " ]")
 			}
-			content.WriteString("\n")
+			content.WriteString("  " + btn + "\n")
+			content.WriteString("    " + mutedStyle.Render(mth.Desc) + "\n")
 		}
 		content.WriteString("\n" + subtleStyle.Render("↑↓ select  Enter confirm  Esc cancel"))
+		return modalStyle.Width(72).Render(content.String())
 	} else if m.activePrompt == PromptUninstallConfirm {
 		content.WriteString(boldStyle.Render("Uninstall ") + errStyle.Render(pkg.ShortName) + boldStyle.Render("?") + "\n\n")
 		opts := []string{"Yes, uninstall", "No, keep it"}
