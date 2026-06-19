@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"owd-cli/bridge"
 	"owd-cli/tui"
@@ -22,6 +23,9 @@ func main() {
 	model := tui.NewModel(root)
 	p = tea.NewProgram(model, tea.WithAltScreen())
 	tui.Program = p
+
+	logPath := filepath.Join(root, ".desktop", "dev.log")
+	tui.StartLogTailer(logPath, p)
 
 	if _, err := p.Run(); err != nil {
 		fmt.Printf("Alas, there's been an error: %v", err)

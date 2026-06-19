@@ -72,6 +72,8 @@ type CatalogEntry struct {
 	InPackageJson  bool             `json:"inPackageJson"`
 	ActiveTheme    bool             `json:"activeTheme"`
 	SourcesMeta    *SourcesMetadata `json:"sourcesMeta"`
+	UpdatedAt      *string          `json:"updatedAt"`
+	PushedAt       *string          `json:"pushedAt"`
 }
 
 type CatalogResponse struct {

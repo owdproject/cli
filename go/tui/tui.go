@@ -122,6 +122,7 @@ type catalogLoadedMsg struct {
 }
 
 type logLineMsg string
+type clearLogsMsg struct{}
 
 type taskFinishedMsg struct {
 	Success bool
@@ -365,7 +366,7 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "s":
 			if !m.serverRunning && !m.taskActive {
 				m.statusMsg = "Starting dev server…"
-				m.addLog(">>> Starting Nuxt dev server (pnpm run dev)…")
+				m.taskActive = true
 				if Program != nil {
 					m.RunServeTask(Program)
 				}
@@ -373,8 +374,10 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "x":
 			if m.serverRunning {
 				m.statusMsg = "Stopping dev server…"
-				m.addLog(">>> Stopping dev server…")
-				m.StopServeTask()
+				m.taskActive = true
+				if Program != nil {
+					m.StopServeTask(Program)
+				}
 			}
 		case "c":
 			items := m.getActiveItems()
@@ -471,6 +474,10 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.addLog(line)
 
+	case clearLogsMsg:
+		m.logLines = []string{}
+		return m, nil
+
 	case taskFinishedMsg:
 		m.taskActive = false
 		if msg.Success {
@@ -484,6 +491,7 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case serverStatusMsg:
 		m.serverRunning = msg.Running
+		m.taskActive = false
 		if !msg.Running {
 			m.statusMsg = "Dev server stopped."
 		} else {
@@ -1044,6 +1052,44 @@ func padRight(s string, width int) string {
 	return s + strings.Repeat(" ", width-len(s))
 }
 
+func padLeft(s string, width int) string {
+	if len(s) >= width {
+		return s[:width]
+	}
+	return strings.Repeat(" ", width-len(s)) + s
+}
+
+func formatCatalogAge(iso *string) string {
+	if iso == nil || *iso == "" {
+		return ""
+	}
+	t, err := time.Parse(time.RFC3339, *iso)
+	if err != nil {
+		t, err = time.Parse("2006-01-02T15:04:05.000Z", *iso)
+		if err != nil {
+			t, err = time.Parse("2006-01-02T15:04:05Z", *iso)
+			if err != nil {
+				return ""
+			}
+		}
+	}
+	duration := time.Since(t)
+	days := int(duration.Hours() / 24)
+	if days < 0 {
+		return "<1d"
+	}
+	if days < 1 {
+		return "<1d"
+	}
+	if days < 7 {
+		return fmt.Sprintf("%dd", days)
+	}
+	if days < 30 {
+		return fmt.Sprintf("%dw", days/7)
+	}
+	return fmt.Sprintf("%dmo", days/30)
+}
+
 // overlayCenter renders `overlay` centered on top of `bg` (both already rendered, ANSI-aware widths).
 func overlayCenter(bg, overlay string) string {
 	bgLines := strings.Split(bg, "\n")
@@ -1136,7 +1182,7 @@ func drawPanel(w, h int, title string, content string, active bool) string {
 			borderColor = colorBorderAct
 		}
 
-		dashCount := w - 4 - titleWidth
+		dashCount := w - 3 - titleWidth
 		if dashCount < 2 {
 			dashCount = 2
 		}
@@ -1563,7 +1609,7 @@ func (m TuiModel) renderCatalogPanel(w, h int, _ bool) string {
 			padRight("DIR", 5) + "  " +
 			padRight("SYNC", 6) + "  " +
 			padRight("PUBLISHER", 14) + "  " +
-			"STARS",
+			padLeft("STARS/AGE", 14),
 	)
 	lines = append(lines, colHeader)
 	lines = append(lines, "  "+subtleStyle.Render(strings.Repeat("─", max(w-2, 4))))
@@ -1691,10 +1737,29 @@ func (m TuiModel) renderCatalogRow(item bridge.CatalogEntry, selected bool, w, n
 	}
 	pubFmt := padRight(truncate(pub, 14), 14)
 
-	stars := subtleStyle.Render("—")
+	age := formatCatalogAge(item.UpdatedAt)
+	starsStr := ""
 	if item.Stars > 0 {
-		stars = warnStyle.Render(fmt.Sprintf("%d", item.Stars))
+		starsStr = fmt.Sprintf("★%d", item.Stars)
 	}
+
+	metaStr := ""
+	if starsStr != "" && age != "" {
+		metaStr = warnStyle.Render(starsStr) + " " + subtleStyle.Render(age)
+	} else if starsStr != "" {
+		metaStr = warnStyle.Render(starsStr)
+	} else if age != "" {
+		metaStr = subtleStyle.Render(age)
+	} else {
+		metaStr = subtleStyle.Render("—")
+	}
+
+	metaW := lipgloss.Width(metaStr)
+	metaPad := ""
+	if metaW < 14 {
+		metaPad = strings.Repeat(" ", 14-metaW)
+	}
+	metaFmt := metaPad + metaStr
 
 	nameFmt := padRight(name, nameW)
 
@@ -1708,7 +1773,7 @@ func (m TuiModel) renderCatalogRow(item bridge.CatalogEntry, selected bool, w, n
 		sync,
 		syncPad,
 		pubFmt,
-		stars,
+		metaFmt,
 	)
 
 	if selected {
@@ -1772,12 +1837,10 @@ func (m TuiModel) renderLogsPanel(w, h int) string {
 		if !m.blink {
 			dot = lipgloss.NewStyle().Foreground(lipgloss.Color("#2ea043")).Render("●")
 		}
-		spinFrames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
-		spin := lipgloss.NewStyle().Foreground(colorCyan).Render(spinFrames[m.tickCount%len(spinFrames)])
 
 		lines = append(lines, "  "+dot+" "+lipgloss.NewStyle().Foreground(colorAccent).Bold(true).Render("Dev server started"))
 		lines = append(lines, "")
-		lines = append(lines, "  "+spin+" "+mutedStyle.Render("Listening on http://localhost:3000"))
+		lines = append(lines, "  "+accentStyle.Render("✓")+" "+mutedStyle.Render("Listening on http://localhost:3000"))
 		lines = append(lines, "")
 	}
 
@@ -1809,7 +1872,11 @@ func (m TuiModel) renderLogsPanel(w, h int) string {
 	}
 
 	if len(m.logLines) == 0 {
-		lines = append(lines, mutedStyle.Render("  Waiting for logs…"))
+		if m.serverRunning && ServerCmd == nil {
+			lines = append(lines, mutedStyle.Render("  Logs unavailable (external server)"))
+		} else {
+			lines = append(lines, mutedStyle.Render("  Waiting for logs…"))
+		}
 	}
 
 	return strings.Join(lines, "\n")
@@ -1968,9 +2035,9 @@ func (m TuiModel) renderModal() string {
 			}
 			var btn string
 			if i == m.promptSel {
-				btn = modalOptionActive.Render("[ " + mth.Label + " ]")
+				btn = modalOptionActive.Render(mth.Label)
 			} else {
-				btn = modalOptionInactive.Render("[ " + mth.Label + " ]")
+				btn = modalOptionInactive.Render(mth.Label)
 			}
 			content.WriteString("  " + btn + "\n")
 			content.WriteString("    " + mutedStyle.Render(mth.Desc) + "\n")
@@ -2369,49 +2436,138 @@ func (m *TuiModel) RunUninstallTask(p *tea.Program) {
 
 func (m *TuiModel) RunServeTask(p *tea.Program) {
 	go func() {
+		logPath := filepath.Join(m.workspaceRoot, ".desktop", "dev.log")
+		logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+		if err != nil {
+			p.Send(logLineMsg(fmt.Sprintf(">>> Failed to open log file: %v", err)))
+			p.Send(serverStatusMsg{Running: false})
+			return
+		}
+		defer logFile.Close()
+
+		logFile.WriteString(">>> Starting Nuxt dev server (pnpm run dev)…\n")
+
 		cmd := exec.Command("pnpm", "run", "dev")
 		cmd.Dir = m.workspaceRoot
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		cmd.Stdout = logFile
+		cmd.Stderr = logFile
 		ServerCmd = cmd
 
-		stdout, err := cmd.StdoutPipe()
-		if err != nil {
-			p.Send(logLineMsg(fmt.Sprintf(">>> Server failed to start: %v", err)))
-			p.Send(serverStatusMsg{Running: false})
-			return
-		}
-		cmd.Stderr = cmd.Stdout
-
 		if err := cmd.Start(); err != nil {
-			p.Send(logLineMsg(fmt.Sprintf(">>> Server failed to start: %v", err)))
+			logFile.WriteString(fmt.Sprintf(">>> Server failed to start: %v\n", err))
 			p.Send(serverStatusMsg{Running: false})
 			return
 		}
+
+		// Write PID file
+		pidPath := filepath.Join(m.workspaceRoot, ".desktop", "dev.pid")
+		_ = os.WriteFile(pidPath, []byte(fmt.Sprintf("%d", cmd.Process.Pid)), 0644)
 
 		p.Send(serverStatusMsg{Running: true})
-		p.Send(logLineMsg(">>> Dev server started."))
-
-		reader := bufio.NewReader(stdout)
-		for {
-			line, err := reader.ReadString('\n')
-			if err != nil {
-				break
-			}
-			p.Send(logLineMsg(strings.TrimRight(line, "\r\n")))
-		}
 
 		cmd.Wait()
-		p.Send(logLineMsg(">>> Dev server exited."))
+		logFile.WriteString(">>> Dev server exited.\n")
 		p.Send(serverStatusMsg{Running: false})
 		ServerCmd = nil
 	}()
 }
 
-func (m *TuiModel) StopServeTask() {
-	if ServerCmd != nil && ServerCmd.Process != nil {
-		syscall.Kill(-ServerCmd.Process.Pid, syscall.SIGKILL)
-		ServerCmd = nil
-	}
+func (m *TuiModel) StopServeTask(p *tea.Program) {
+	go func() {
+		if ServerCmd != nil && ServerCmd.Process != nil {
+			_ = syscall.Kill(-ServerCmd.Process.Pid, syscall.SIGKILL)
+			ServerCmd = nil
+		}
+
+		pidPath := filepath.Join(m.workspaceRoot, ".desktop", "dev.pid")
+		if data, err := os.ReadFile(pidPath); err == nil {
+			var pid int
+			if _, err := fmt.Sscanf(strings.TrimSpace(string(data)), "%d", &pid); err == nil {
+				_ = syscall.Kill(-pid, syscall.SIGKILL)
+				_ = syscall.Kill(pid, syscall.SIGKILL)
+			}
+			_ = os.Remove(pidPath)
+		}
+
+		_ = exec.Command("pkill", "-9", "-f", "nuxt.mjs").Run()
+		_ = exec.Command("pkill", "-9", "-f", "nuxt dev").Run()
+		_ = exec.Command("pkill", "-9", "-f", "nx run desktop:serve").Run()
+
+		p.Send(serverStatusMsg{Running: false})
+	}()
+}
+
+func StartLogTailer(logPath string, p *tea.Program) {
+	go func() {
+		var lastSize int64 = 0
+
+		// Check if file exists and get its initial size
+		if info, err := os.Stat(logPath); err == nil {
+			lastSize = info.Size()
+			// Seek back up to 10000 bytes (~100 lines) to show initial history
+			offset := lastSize - 10000
+			if offset < 0 {
+				offset = 0
+			}
+
+			file, err := os.Open(logPath)
+			if err == nil {
+				_, _ = file.Seek(offset, 0)
+				reader := bufio.NewReader(file)
+				if offset > 0 {
+					_, _ = reader.ReadString('\n') // discard first potentially cut line
+				}
+				for {
+					line, err := reader.ReadString('\n')
+					if err != nil {
+						break
+					}
+					p.Send(logLineMsg(strings.TrimRight(line, "\r\n")))
+				}
+				file.Close()
+			}
+		}
+
+		for {
+			time.Sleep(250 * time.Millisecond)
+
+			info, err := os.Stat(logPath)
+			if err != nil {
+				continue
+			}
+
+			if info.Size() < lastSize {
+				// File was truncated/cleared
+				lastSize = info.Size()
+				p.Send(clearLogsMsg{})
+				continue
+			}
+
+			if info.Size() > lastSize {
+				file, err := os.Open(logPath)
+				if err != nil {
+					continue
+				}
+				_, err = file.Seek(lastSize, 0)
+				if err != nil {
+					file.Close()
+					continue
+				}
+
+				reader := bufio.NewReader(file)
+				for {
+					line, err := reader.ReadString('\n')
+					if err != nil {
+						break
+					}
+					p.Send(logLineMsg(strings.TrimRight(line, "\r\n")))
+				}
+				lastSize = info.Size()
+				file.Close()
+			}
+		}
+	}()
 }
 
 // ─────────────────────────────────────────────
