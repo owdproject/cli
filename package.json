@@ -28,7 +28,8 @@
     "owd": "bin/owd.js"
   },
   "files": [
-    "bin"
+    "bin",
+    "go"
   ],
   "dependencies": {
     "neo-blessed": "^0.2.0",
