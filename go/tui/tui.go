@@ -320,6 +320,11 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		
+		if m.tickCount%100 == 0 && !m.loading && !m.taskActive && !m.checkingUpdates {
+			m.checkingUpdates = true
+			return m, tea.Batch(tickCmd(), m.checkForUpdatesCmd())
+		}
+		
 		return m, tickCmd()
 
 	case tea.KeyMsg:
