@@ -257,7 +257,7 @@ func (m TuiModel) Init() tea.Cmd {
 // ─────────────────────────────────────────────
 
 func tickCmd() tea.Cmd {
-	return tea.Tick(500*time.Millisecond, func(t time.Time) tea.Msg {
+	return tea.Tick(150*time.Millisecond, func(t time.Time) tea.Msg {
 		return tickMsg(t)
 	})
 }
@@ -306,14 +306,18 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tickMsg:
-		m.blink = !m.blink
 		m.tickCount++
+		if m.tickCount%4 == 0 {
+			m.blink = !m.blink
+		}
 		
-		// Sample Nuxt process memory stats
-		mb := getNuxtMemoryMB()
-		m.memHistory = append(m.memHistory, mb)
-		if len(m.memHistory) > 30 {
-			m.memHistory = m.memHistory[1:]
+		if m.tickCount%10 == 0 {
+			// Sample Nuxt process memory stats
+			mb := getNuxtMemoryMB()
+			m.memHistory = append(m.memHistory, mb)
+			if len(m.memHistory) > 30 {
+				m.memHistory = m.memHistory[1:]
+			}
 		}
 		
 		return m, tickCmd()
@@ -1420,7 +1424,17 @@ func (m TuiModel) renderClientPanel(w, h int) string {
 
 	// Server status line
 	var statusLine string
-	if m.serverRunning {
+	if m.taskActive && strings.Contains(strings.ToLower(m.statusMsg), "stopping") {
+		spinnerFrames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+		frame := spinnerFrames[m.tickCount%len(spinnerFrames)]
+		dot := lipgloss.NewStyle().Foreground(colorWarn).Bold(true).Render(frame)
+		statusLine = dot + " " + boldStyle.Render("STOPPING") + "  " + mutedStyle.Render("http://localhost:3000")
+	} else if m.taskActive && strings.Contains(strings.ToLower(m.statusMsg), "starting") {
+		spinnerFrames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+		frame := spinnerFrames[m.tickCount%len(spinnerFrames)]
+		dot := lipgloss.NewStyle().Foreground(colorCyan).Bold(true).Render(frame)
+		statusLine = dot + " " + boldStyle.Render("STARTING") + "  " + mutedStyle.Render("http://localhost:3000")
+	} else if m.serverRunning {
 		dot := accentStyle.Render("●")
 		if m.blink {
 			dot = lipgloss.NewStyle().Foreground(lipgloss.Color("#2ea043")).Bold(true).Render("●")
@@ -1431,7 +1445,9 @@ func (m TuiModel) renderClientPanel(w, h int) string {
 			_ = m.ctx
 		}
 	} else if m.taskActive {
-		dot := warnStyle.Render("…")
+		spinnerFrames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+		frame := spinnerFrames[m.tickCount%len(spinnerFrames)]
+		dot := lipgloss.NewStyle().Foreground(colorWarn).Bold(true).Render(frame)
 		statusLine = dot + " " + boldStyle.Render("STARTING") + "  " + mutedStyle.Render("http://localhost:3000")
 	} else {
 		dot := errStyle.Render("○")
