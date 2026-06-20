@@ -224,22 +224,24 @@ type TuiModel struct {
 	termHeight int
 
 	lastInstallMethod string
+	logTailerStarted  bool
 }
 
 func NewModel(root string) TuiModel {
 	return TuiModel{
-		workspaceRoot: root,
-		activeTab:     1, // Default to Apps (index 1), Internal (index 0) is secret
-		loading:       true,
-		statusMsg:     "Initializing OWD Control Panel…",
-		logLines:      []string{},
-		memHistory:    []int{},
-		gitChangesMap: make(map[string]GitChanges),
-		updatesMap:    make(map[string]UpdateInfo),
-		settingsSel:          0,
-		termWidth:            160,
-		termHeight:           40,
-		lastInstallMethod:    "npm",
+		workspaceRoot:    root,
+		activeTab:        1, // Default to Apps (index 1), Internal (index 0) is secret
+		loading:          true,
+		statusMsg:        "Initializing OWD Control Panel…",
+		logLines:         []string{},
+		memHistory:       []int{},
+		gitChangesMap:    make(map[string]GitChanges),
+		updatesMap:       make(map[string]UpdateInfo),
+		settingsSel:      0,
+		termWidth:        160,
+		termHeight:       40,
+		lastInstallMethod: "npm",
+		logTailerStarted:  false,
 	}
 }
 
@@ -287,8 +289,27 @@ func (m TuiModel) loadCatalogCmd(force bool) tea.Cmd {
 
 func (m TuiModel) checkServerStatusCmd() tea.Cmd {
 	return func() tea.Msg {
-		cmd := exec.Command("pgrep", "-f", "nuxt.mjs")
-		err := cmd.Run()
+		if m.ctx == nil {
+			return serverStatusMsg{Running: false}
+		}
+
+		pidPath := filepath.Join(m.ctx.Paths.MetaDir, "dev.pid")
+		data, err := os.ReadFile(pidPath)
+		if err != nil {
+			return serverStatusMsg{Running: false}
+		}
+
+		var pid int
+		if _, err := fmt.Sscanf(strings.TrimSpace(string(data)), "%d", &pid); err != nil {
+			return serverStatusMsg{Running: false}
+		}
+
+		process, err := os.FindProcess(pid)
+		if err != nil {
+			return serverStatusMsg{Running: false}
+		}
+
+		err = process.Signal(syscall.Signal(0))
 		return serverStatusMsg{Running: err == nil}
 	}
 }
@@ -313,7 +334,16 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		
 		if m.tickCount%10 == 0 {
 			// Sample Nuxt process memory stats
-			mb := getNuxtMemoryMB()
+			var mb int
+			if m.ctx != nil {
+				pidPath := filepath.Join(m.ctx.Paths.MetaDir, "dev.pid")
+				if data, err := os.ReadFile(pidPath); err == nil {
+					var pid int
+					if _, err := fmt.Sscanf(strings.TrimSpace(string(data)), "%d", &pid); err == nil {
+						mb = getProcessMemoryMB(pid)
+					}
+				}
+			}
 			m.memHistory = append(m.memHistory, mb)
 			if len(m.memHistory) > 30 {
 				m.memHistory = m.memHistory[1:]
@@ -441,6 +471,12 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.ctx = msg.Ctx
 			m.statusMsg = "Workspace loaded."
+
+			if !m.logTailerStarted && m.ctx != nil {
+				m.logTailerStarted = true
+				logPath := filepath.Join(m.ctx.Paths.MetaDir, "dev.log")
+				StartLogTailer(logPath, Program)
+			}
 		}
 
 	case catalogLoadedMsg:
@@ -1215,10 +1251,10 @@ type WorkspaceVersions struct {
 	Owd  string
 }
 
-func getVersions(root string) WorkspaceVersions {
+func getVersions(root string, workspaceRoot string) WorkspaceVersions {
 	vers := WorkspaceVersions{Nuxt: "—", Pnpm: "—", Owd: "—"}
 	
-	// Read root package.json
+	// Read root package.json (monorepo or playground package)
 	rootPkgPath := filepath.Join(root, "package.json")
 	if data, err := os.ReadFile(rootPkgPath); err == nil {
 		lines := strings.Split(string(data), "\n")
@@ -1242,8 +1278,8 @@ func getVersions(root string) WorkspaceVersions {
 		}
 	}
 	
-	// Read OWD Core version from packages/core/package.json
-	corePkgPath := filepath.Join(root, "packages", "core", "package.json")
+	// Read OWD Core version from workspaceRoot/packages/core/package.json
+	corePkgPath := filepath.Join(workspaceRoot, "packages", "core", "package.json")
 	if data, err := os.ReadFile(corePkgPath); err == nil {
 		lines := strings.Split(string(data), "\n")
 		for _, l := range lines {
@@ -1262,36 +1298,28 @@ func getVersions(root string) WorkspaceVersions {
 	return vers
 }
 
-func getNuxtMemoryMB() int {
-	out, err := exec.Command("pgrep", "-f", "nuxt.mjs").Output()
+func getProcessMemoryMB(pid int) int {
+	if pid <= 0 {
+		return 0
+	}
+	path := fmt.Sprintf("/proc/%d/status", pid)
+	data, err := os.ReadFile(path)
 	if err != nil {
-		out, err = exec.Command("pgrep", "-f", "nuxt").Output()
-		if err != nil {
-			return 0
+		return 0
+	}
+	lines := strings.Split(string(data), "\n")
+	for _, l := range lines {
+		if strings.HasPrefix(l, "VmRSS:") {
+			fields := strings.Fields(l)
+			if len(fields) >= 2 {
+				var kb int
+				if _, err := fmt.Sscanf(fields[1], "%d", &kb); err == nil {
+					return kb / 1024
+				}
+			}
 		}
 	}
-	pids := strings.Split(strings.TrimSpace(string(out)), "\n")
-	if len(pids) == 0 || pids[0] == "" {
-		return 0
-	}
-	pid := strings.TrimSpace(pids[0])
-	statmPath := fmt.Sprintf("/proc/%s/statm", pid)
-	data, err := os.ReadFile(statmPath)
-	if err != nil {
-		return 0
-	}
-	fields := strings.Fields(string(data))
-	if len(fields) < 2 {
-		return 0
-	}
-	var resident int
-	_, err = fmt.Sscanf(fields[1], "%d", &resident)
-	if err != nil {
-		return 0
-	}
-	pageSize := os.Getpagesize()
-	mb := resident * pageSize / 1024 / 1024
-	return mb
+	return 0
 }
 
 func renderPanelTitle(title string) string {
@@ -1476,7 +1504,11 @@ func (m TuiModel) renderClientPanel(w, h int) string {
 	// Workspace
 	wsPath := "—"
 	if m.ctx != nil {
-		wsPath = strings.Replace(m.ctx.WorkspaceRoot, os.Getenv("HOME"), "~", 1)
+		if m.ctx.Paths.IsPlayground {
+			wsPath = strings.Replace(m.ctx.Paths.Desktop, os.Getenv("HOME"), "~", 1)
+		} else {
+			wsPath = strings.Replace(m.ctx.WorkspaceRoot, os.Getenv("HOME"), "~", 1)
+		}
 	} else if m.workspaceRoot != "" {
 		wsPath = strings.Replace(m.workspaceRoot, os.Getenv("HOME"), "~", 1)
 	}
@@ -1485,8 +1517,14 @@ func (m TuiModel) renderClientPanel(w, h int) string {
 
 	// Git
 	root := m.workspaceRoot
+	workspaceRoot := m.workspaceRoot
 	if m.ctx != nil {
-		root = m.ctx.WorkspaceRoot
+		workspaceRoot = m.ctx.WorkspaceRoot
+		if m.ctx.Paths.IsPlayground {
+			root = m.ctx.Paths.PackageDir
+		} else {
+			root = m.ctx.WorkspaceRoot
+		}
 	}
 	branch := gitBranch(root)
 	changes := gitChanges(root)
@@ -1494,7 +1532,7 @@ func (m TuiModel) renderClientPanel(w, h int) string {
 	lines = append(lines, mutedStyle.Render("  Git        ")+gitLine)
 
 	// Versions
-	vers := getVersions(root)
+	vers := getVersions(root, workspaceRoot)
 	lines = append(lines, mutedStyle.Render("  Runtime    ")+boldStyle.Render(fmt.Sprintf("Nuxt v%s  ·  OWD v%s  ·  pnpm v%s", vers.Nuxt, vers.Owd, vers.Pnpm)))
 
 	content := strings.Join(lines, "\n")
@@ -2457,7 +2495,14 @@ func (m *TuiModel) RunUninstallTask(p *tea.Program) {
 
 func (m *TuiModel) RunServeTask(p *tea.Program) {
 	go func() {
-		logPath := filepath.Join(m.workspaceRoot, ".desktop", "dev.log")
+		if m.ctx == nil {
+			p.Send(serverStatusMsg{Running: false})
+			return
+		}
+
+		_ = os.MkdirAll(m.ctx.Paths.MetaDir, 0755)
+
+		logPath := filepath.Join(m.ctx.Paths.MetaDir, "dev.log")
 		logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 		if err != nil {
 			p.Send(logLineMsg(fmt.Sprintf(">>> Failed to open log file: %v", err)))
@@ -2469,7 +2514,13 @@ func (m *TuiModel) RunServeTask(p *tea.Program) {
 		logFile.WriteString(">>> Starting Nuxt dev server (pnpm run dev)…\n")
 
 		cmd := exec.Command("pnpm", "run", "dev")
-		cmd.Dir = m.workspaceRoot
+		if m.ctx.Paths.IsPlayground {
+			cmd.Dir = m.ctx.Paths.PackageDir
+		} else {
+			cmd.Dir = m.workspaceRoot
+		}
+
+		cmd.Env = append(os.Environ(), fmt.Sprintf("PORT=%d", m.ctx.Settings.DevPort))
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 		cmd.Stdout = logFile
 		cmd.Stderr = logFile
@@ -2482,7 +2533,7 @@ func (m *TuiModel) RunServeTask(p *tea.Program) {
 		}
 
 		// Write PID file
-		pidPath := filepath.Join(m.workspaceRoot, ".desktop", "dev.pid")
+		pidPath := filepath.Join(m.ctx.Paths.MetaDir, "dev.pid")
 		_ = os.WriteFile(pidPath, []byte(fmt.Sprintf("%d", cmd.Process.Pid)), 0644)
 
 		p.Send(serverStatusMsg{Running: true})
@@ -2496,12 +2547,17 @@ func (m *TuiModel) RunServeTask(p *tea.Program) {
 
 func (m *TuiModel) StopServeTask(p *tea.Program) {
 	go func() {
+		if m.ctx == nil {
+			p.Send(serverStatusMsg{Running: false})
+			return
+		}
+
 		if ServerCmd != nil && ServerCmd.Process != nil {
 			_ = syscall.Kill(-ServerCmd.Process.Pid, syscall.SIGKILL)
 			ServerCmd = nil
 		}
 
-		pidPath := filepath.Join(m.workspaceRoot, ".desktop", "dev.pid")
+		pidPath := filepath.Join(m.ctx.Paths.MetaDir, "dev.pid")
 		if data, err := os.ReadFile(pidPath); err == nil {
 			var pid int
 			if _, err := fmt.Sscanf(strings.TrimSpace(string(data)), "%d", &pid); err == nil {

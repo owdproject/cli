@@ -124,7 +124,7 @@ export function normalizeCatalogSort(value) {
   return modes.includes(value) ? /** @type {CatalogSortMode} */ (value) : 'updated'
 }
 
-export function loadSettings(workspaceRoot) {
+export function loadSettings(workspaceRoot, metaDir = null) {
   const defaults = {
     devPort: 3000,
     githubUser: null,
@@ -135,7 +135,7 @@ export function loadSettings(workspaceRoot) {
   }
 
   try {
-    const path = settingsPath(workspaceRoot)
+    const path = metaDir ? join(metaDir, 'settings.json') : settingsPath(workspaceRoot)
     if (!existsSync(path)) {
       return { ...defaults, ...detectGithubUser(), installMode: 'npm' }
     }
@@ -169,10 +169,11 @@ function detectGithubUser() {
   return {}
 }
 
-export function saveSettings(workspaceRoot, settings) {
-  const dir = desktopMetaDir(workspaceRoot)
+export function saveSettings(workspaceRoot, settings, metaDir = null) {
+  const dir = metaDir || desktopMetaDir(workspaceRoot)
   mkdirSync(dir, { recursive: true })
-  writeFileSync(settingsPath(workspaceRoot), JSON.stringify(settings, null, 2) + '\n')
+  const path = metaDir ? join(metaDir, 'settings.json') : settingsPath(workspaceRoot)
+  writeFileSync(path, JSON.stringify(settings, null, 2) + '\n')
 }
 
 export function desktopPaths(workspaceRoot) {

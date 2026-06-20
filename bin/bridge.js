@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { writeFileSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import {
   findWorkspaceRoot,
   loadSettings,
@@ -14,14 +15,46 @@ import {
   writeDesktopDependencies
 } from './lib/config.js'
 import { loadCatalog, mergeInstalled } from './lib/catalog.js'
+import { resolveDevTarget } from './lib/playgroundContext.js'
+import {
+  resolveDesktopConfigPath,
+  desktopConfigWritePath
+} from './lib/desktopConfig.js'
 
 function getWorkspaceContext() {
   const workspaceRoot = findWorkspaceRoot()
   if (!workspaceRoot) {
     throw new Error('Not inside an OWD workspace')
   }
-  const settings = loadSettings(workspaceRoot)
-  const paths = desktopPaths(workspaceRoot)
+
+  const devTarget = resolveDevTarget(process.cwd(), workspaceRoot)
+  let paths
+  
+  if (devTarget && devTarget.mode === 'playground') {
+    const playgroundDir = devTarget.playgroundDir
+    const resolved = resolveDesktopConfigPath(playgroundDir)
+    const configWrite = desktopConfigWritePath(playgroundDir)
+    paths = {
+      desktop: playgroundDir,
+      config: resolved?.path ?? configWrite,
+      configWrite,
+      configLegacy: resolved?.legacy ?? false,
+      packageJson: join(playgroundDir, 'package.json'),
+      isPlayground: true,
+      packageName: devTarget.packageName,
+      packageDir: devTarget.packageDir,
+      metaDir: join(playgroundDir, '.desktop'),
+    }
+  } else {
+    paths = {
+      ...desktopPaths(workspaceRoot),
+      isPlayground: false,
+      metaDir: join(workspaceRoot, '.desktop'),
+    }
+  }
+
+  const settings = loadSettings(workspaceRoot, paths.metaDir)
+  
   let config = { theme: null, apps: [], modules: [] }
   try {
     config = readDesktopConfig(paths.config, workspaceRoot)
@@ -44,6 +77,7 @@ async function main() {
         settings: ctx.settings,
         config: ctx.config,
         deps: ctx.deps,
+        paths: ctx.paths,
       }, null, 2))
     } else if (cmd === '--catalog') {
       const ctx = getWorkspaceContext()
@@ -76,7 +110,7 @@ async function main() {
       }
 
       if (payload.settings) {
-        saveSettings(ctx.workspaceRoot, payload.settings)
+        saveSettings(ctx.workspaceRoot, payload.settings, ctx.paths.metaDir)
       }
       
       console.log(JSON.stringify({ success: true }))

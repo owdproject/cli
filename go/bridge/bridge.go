@@ -25,11 +25,24 @@ type Settings struct {
 	LastInstallChoices map[string]interface{} `json:"lastInstallChoices"`
 }
 
+type WorkspacePaths struct {
+	Desktop      string `json:"desktop"`
+	Config       string `json:"config"`
+	ConfigWrite  string `json:"configWrite"`
+	ConfigLegacy bool   `json:"configLegacy"`
+	PackageJson  string `json:"packageJson"`
+	IsPlayground bool   `json:"isPlayground"`
+	PackageName  string `json:"packageName,omitempty"`
+	PackageDir   string `json:"packageDir,omitempty"`
+	MetaDir      string `json:"metaDir"`
+}
+
 type WorkspaceContext struct {
-	WorkspaceRoot string   `json:"workspaceRoot"`
-	Settings      Settings `json:"settings"`
-	Config        Config   `json:"config"`
-	Deps          []string `json:"deps"`
+	WorkspaceRoot string         `json:"workspaceRoot"`
+	Settings      Settings       `json:"settings"`
+	Config        Config         `json:"config"`
+	Deps          []string       `json:"deps"`
+	Paths         WorkspacePaths `json:"paths"`
 }
 
 type GithubForkInfo struct {
