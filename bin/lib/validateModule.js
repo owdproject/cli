@@ -407,6 +407,13 @@ export function validateOwdModule(packageDir, options = {}) {
       'Do not add a "prepare" script on publishable packages — it runs on npm publish/install and breaks release. Use "prepack" (full build) and "dev:prepare" (local stub + playground) only.',
     )
   }
+  if (!scripts.validate?.includes('desktop validate')) {
+    issue(
+      'warning',
+      'validate-script',
+      'scripts.validate should run "desktop validate ."',
+    )
+  }
   if (!rootExport?.development?.includes('src/module')) {
     issue(
       'warning',
@@ -452,6 +459,13 @@ export function validateOwdModule(packageDir, options = {}) {
       'error',
       'legacy-runtime-root',
       'legacy layout: move runtime/ under src/runtime/',
+    )
+  }
+  if (existsSync(join(dir, 'runtime')) && existsSync(join(dir, 'src', 'runtime'))) {
+    issue(
+      'error',
+      'duplicate-runtime-root',
+      'remove legacy runtime/ at package root — keep only src/runtime/ (duplicate layout fails CI and confuses module resolution)',
     )
   }
 
@@ -502,7 +516,7 @@ export function validateOwdModule(packageDir, options = {}) {
       issue(
         'warning',
         'tailwind-path',
-        'src/module.ts should call registerTailwindPath from @owdproject/kit-primevue/kit/registerTailwindPath for Vue components',
+        'src/module.ts should call registerTailwindPath from @owdproject/kit-tailwind/kit/registerTailwindPath for Vue components',
       )
     }
 
@@ -653,9 +667,24 @@ export function validateOwdModule(packageDir, options = {}) {
   }
 
   if (kind === 'app') {
+    const appDeps = /** @type {Record<string, string>} */ (pkg.dependencies ?? {})
+    if (appDeps[DESKTOP_KIT_PRIMEVUE_PACKAGE]) {
+      issue(
+        'warning',
+        'app-kit-primevue-dep',
+        'remove @owdproject/kit-primevue from app dependencies — PrimeVue comes from the theme at runtime; apps only need @owdproject/kit-tailwind',
+      )
+    }
+
     const appConfigPath = join(dir, 'src', 'runtime', 'app.config.ts')
     if (!existsSync(appConfigPath)) {
       issue('error', 'app-config', 'src/runtime/app.config.ts is required for apps')
+    } else if (/position\s*:\s*\{[\s\S]*?\bx\s*:/m.test(readFileSync(appConfigPath, 'utf8'))) {
+      issue(
+        'warning',
+        'app-config-position',
+        'omit windows.*.position in app.config.ts for pre-open centering; set explicit size.width and size.height',
+      )
     }
 
     const pluginPath = join(dir, 'src', 'runtime', 'plugin.ts')
@@ -705,10 +734,46 @@ export function validateOwdModule(packageDir, options = {}) {
         'launch-plugin',
         'optional: add playground/app/plugins/launch-*.client.ts for dev auto-open',
       )
+    } else {
+      for (const launchFile of launchPlugins) {
+        const launchPath = join(playgroundDir, 'app', 'plugins', launchFile)
+        const launchSrc = readFileSync(launchPath, 'utf8')
+        if (/if\s*\(\s*!?\s*import\.meta\.dev\s*\)/.test(launchSrc)) {
+          issue(
+            'warning',
+            'launch-dev-guard',
+            `${launchFile}: remove import.meta.dev guard — GitHub Pages static generate needs the same auto-start path`,
+          )
+        }
+        if (!launchSrc.includes('autoStartPlaygroundApps')) {
+          issue(
+            'warning',
+            'launch-auto-start',
+            `${launchFile}: prefer autoStartPlaygroundApps(nuxtApp, [...]) from @owdproject/core (handles workArea + stale windows)`,
+          )
+        }
+      }
     }
   }
 
-  if (!existsSync(join(dir, '.github', 'workflows', 'pages.yml'))) {
+  const pagesWorkflowPath = join(dir, '.github', 'workflows', 'pages.yml')
+  if (existsSync(pagesWorkflowPath)) {
+    const pagesWorkflow = readFileSync(pagesWorkflowPath, 'utf8')
+    if (/\bnypm\b/.test(pagesWorkflow)) {
+      issue(
+        'warning',
+        'pages-nypm',
+        'pages.yml uses nypm in the app repo alone — breaks workspace:*; use client checkout overlay (see PLAYGROUND.md)',
+      )
+    }
+    if (!existsSync(join(dir, '.github', 'workflows', 'ci.yml'))) {
+      issue(
+        'warning',
+        'ci-workflow',
+        'add .github/workflows/ci.yml with validate-and-build (dev:prepare → validate → dev:generate)',
+      )
+    }
+  } else {
     issue(
       'warning',
       'pages-workflow',
