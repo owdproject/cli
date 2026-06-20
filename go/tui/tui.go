@@ -2614,6 +2614,30 @@ func runGitStatus(dir string) (added, modified, deleted int, err error) {
 	return added, modified, deleted, nil
 }
 
+func runGitStatusForSubdir(rootDir, subdir string) (added, modified, deleted int, err error) {
+	cmd := exec.Command("git", "status", "--porcelain", subdir)
+	cmd.Dir = rootDir
+	out, err := cmd.Output()
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	lines := strings.Split(string(out), "\n")
+	for _, line := range lines {
+		if len(line) < 3 {
+			continue
+		}
+		status := line[:2]
+		if strings.HasPrefix(status, "??") {
+			added++
+		} else if strings.Contains(status, "D") {
+			deleted++
+		} else if strings.Contains(status, "M") || strings.Contains(status, "A") || strings.Contains(status, "R") || strings.Contains(status, "C") {
+			modified++
+		}
+	}
+	return added, modified, deleted, nil
+}
+
 func runGitBehindCheck(dir string) (int, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
@@ -2764,6 +2788,16 @@ func (m TuiModel) checkForUpdatesCmd() tea.Cmd {
 						behind, err := runGitBehindCheck(pkgPath)
 						if err == nil && behind > 0 {
 							res.update = &UpdateInfo{LocalGit: true, BehindCount: behind}
+						}
+					} else {
+						// Fallback: Check if the monorepo itself tracks changes for this directory
+						parentGitDir := filepath.Join(m.workspaceRoot, ".git")
+						if _, err := os.Stat(parentGitDir); err == nil {
+							relPath := filepath.Join(kindDir, short)
+							added, modified, deleted, err := runGitStatusForSubdir(m.workspaceRoot, relPath)
+							if err == nil && (added > 0 || modified > 0 || deleted > 0) {
+								res.changes = &GitChanges{Added: added, Modified: modified, Deleted: deleted}
+							}
 						}
 					}
 				}
