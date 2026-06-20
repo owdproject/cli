@@ -31,7 +31,7 @@ pnpm add -g @owdproject/cli
 Once installed, run the `desktop` command to open the control panel:
 
 ```bash
-desktop
+pnpm desktop
 ```
 
 ### CLI Reference
@@ -39,27 +39,27 @@ desktop
 #### Dev Server
 Start the development server for the monorepo or automatically detect a module's playground:
 ```bash
-desktop dev [--playground]
+pnpm desktop dev [--playground]
 ```
 
 #### Add Packages
 Install apps, modules, or themes from npm, local directories, or custom repositories:
 ```bash
-desktop add app-todo --npm
-desktop add theme-nova --dev
-desktop add module-fs --from <github-user>
+pnpm desktop add app-todo --npm
+pnpm desktop add theme-nova --dev
+pnpm desktop add module-fs --from <github-user>
 ```
 
 #### Scaffold a Project
 Initialize a fresh OWD workspace:
 ```bash
-desktop init [project-name]
+pnpm desktop init [project-name]
 ```
 
 #### Validation
 Check Nuxt module configuration and playground directory structures:
 ```bash
-desktop validate
+pnpm desktop validate
 ```
 
 ## License
