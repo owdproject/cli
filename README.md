@@ -1,28 +1,67 @@
-# 🖥️ OWD CLI
+<p align="center">
+  <img width="160" height="160" src="https://avatars.githubusercontent.com/u/65117737?s=160&v=4" />
+</p>
+<h1 align="center">CLI</h1>
+<h3 align="center">
+  Control Panel and Command Line Interface for Open Web Desktop.
+</h3>
 
-> Control Panel and Command Line Interface for Open Web Desktop
+<br />
 
-This package provides the \`desktop\` and \`owd\` commands to manage your Open Web Desktop workspace, applications, and themes.
+## Overview
 
-## Features
-
-- **Control Panel**: A powerful TUI (Terminal User Interface) to manage your desktop state.
-- **Package Management**: Install, update, and remove apps, themes, and modules.
-- **Scaffolding**: Generate new applications and themes from blueprints.
-- **Sync**: Keep your \`package.json\` and \`desktop.config.ts\` in sync.
+This package provides the official `desktop` (and legacy `owd`) CLI tool for Open Web Desktop. It features a rich Terminal User Interface (TUI) Control Panel to manage your running local OWD dev server, install/remove apps, modules, and themes, configure workspace settings, and scaffold new OWD components.
 
 ## Installation
 
-\`\`\`bash
-pnpm add -D @owdproject/cli
-\`\`\`
+```bash
+pnpm add -g @owdproject/cli
+```
+*Note: You can also install it as a devDependency in your OWD workspace project and run it via `pnpm desktop`.*
+
+## Features
+
+- **Control Panel (TUI)**: An interactive terminal interface for managing OWD projects.
+- **Scaffolding**: Instantly initialize new workspaces or scaffold new apps and themes.
+- **Package Management**: Install and validate OWD modules from npm, local directories, or custom Git repositories.
+- **Graceful Fallback**: The interactive Control Panel compiles a fast Go-based TUI locally, falling back seamlessly to a JavaScript runner if Go is not available.
 
 ## Usage
 
-\`\`\`bash
-pnpm desktop
-\`\`\`
+Once installed, run the `desktop` command to open the control panel:
 
----
+```bash
+desktop
+```
 
-Licensed under [MIT](./LICENSE)
+### CLI Reference
+
+#### Dev Server
+Start the development server for the monorepo or automatically detect a module's playground:
+```bash
+desktop dev [--playground]
+```
+
+#### Add Packages
+Install apps, modules, or themes from npm, local directories, or custom repositories:
+```bash
+desktop add app-todo --npm
+desktop add theme-nova --dev
+desktop add module-fs --from <github-user>
+```
+
+#### Scaffold a Project
+Initialize a fresh OWD workspace:
+```bash
+desktop init [project-name]
+```
+
+#### Validation
+Check Nuxt module configuration and playground directory structures:
+```bash
+desktop validate
+```
+
+## License
+
+This package is released under the [MIT License](LICENSE).
