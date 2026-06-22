@@ -135,6 +135,16 @@ type serverStatusMsg struct {
 	Running bool
 }
 
+type promptThemeDepMsg struct {
+	DepName   string
+	ShortName string
+}
+
+type themeDepDecision struct {
+	install bool
+	method  string
+}
+
 type tickMsg time.Time
 
 type memTickMsg struct {
@@ -171,6 +181,8 @@ const (
 	PromptManagePackage
 	PromptForceReinstallConfirm
 	PromptSettings
+	PromptThemeDepConfirm
+	PromptThemeDepMethod
 )
 
 var Program *tea.Program
@@ -246,6 +258,9 @@ type TuiModel struct {
 	finalizedAdds    map[string]string // pkgName -> method
 	finalizedRemoves []string          // pkgNames
 	finalizedTheme   *string           // theme name to activate
+
+	themeDepResolveChan chan themeDepDecision
+	activeThemeDep      string
 }
 
 func NewModel(root string) TuiModel {
@@ -266,6 +281,7 @@ func NewModel(root string) TuiModel {
 		pendingPackages:  make(map[string]bool),
 		pendingTheme:     nil,
 		finalizedAdds:    make(map[string]string),
+		themeDepResolveChan: make(chan themeDepDecision, 1),
 	}
 }
 
@@ -899,6 +915,29 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.statusMsg = "All packages are up to date."
 		}
+	case promptThemeDepMsg:
+		m.activePrompt = PromptThemeDepConfirm
+		m.activeThemeDep = msg.DepName
+		m.promptSel = 0 // default to Yes (0: Yes, 1: No)
+
+		// Find catalog entry for this dep
+		var entry *bridge.CatalogEntry
+		if m.catalog != nil {
+			for _, e := range m.catalog.Entries {
+				if e.Name == msg.DepName {
+					entry = &e
+					break
+				}
+			}
+		}
+		if entry == nil {
+			entry = &bridge.CatalogEntry{
+				Name:      msg.DepName,
+				ShortName: msg.ShortName,
+				Kind:      "module",
+			}
+		}
+		m.promptPkg = entry
 		return m, nil
 
 	case logLineMsg:
@@ -953,10 +992,14 @@ func (m *TuiModel) addLog(line string) {
 func (m TuiModel) handlePromptKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc", "q":
+		if m.activePrompt == PromptThemeDepConfirm || m.activePrompt == PromptThemeDepMethod {
+			m.themeDepResolveChan <- themeDepDecision{install: false}
+		}
 		m.activePrompt = PromptNone
 		m.promptPkg = nil
 		m.promptQueue = nil
 		m.promptQueueIndex = 0
+		m.activeThemeDep = ""
 		return m, nil
 	case "up", "k":
 		if m.activePrompt == PromptManagePackage {
@@ -985,9 +1028,9 @@ func (m TuiModel) handlePromptKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		} else {
 			limit := 2
-			if m.activePrompt == PromptUninstallConfirm || m.activePrompt == PromptForceReinstallConfirm {
+			if m.activePrompt == PromptUninstallConfirm || m.activePrompt == PromptForceReinstallConfirm || m.activePrompt == PromptThemeDepConfirm {
 				limit = 1
-			} else if m.activePrompt == PromptInstallMethod && m.promptPkg != nil {
+			} else if (m.activePrompt == PromptInstallMethod || m.activePrompt == PromptThemeDepMethod) && m.promptPkg != nil {
 				limit = len(m.getInstallMethods(m.promptPkg)) - 1
 			}
 			if m.promptSel < limit {
@@ -999,7 +1042,7 @@ func (m TuiModel) handlePromptKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if m.settingsSel == 5 {
 				m.settingsSel = 4
 			}
-		} else if m.activePrompt != PromptManagePackage && m.activePrompt != PromptInstallMethod {
+		} else if m.activePrompt != PromptManagePackage && m.activePrompt != PromptInstallMethod && m.activePrompt != PromptThemeDepMethod {
 			if m.promptSel > 0 {
 				m.promptSel--
 			}
@@ -1009,9 +1052,9 @@ func (m TuiModel) handlePromptKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if m.settingsSel == 4 {
 				m.settingsSel = 5
 			}
-		} else if m.activePrompt != PromptManagePackage && m.activePrompt != PromptInstallMethod {
+		} else if m.activePrompt != PromptManagePackage && m.activePrompt != PromptInstallMethod && m.activePrompt != PromptThemeDepMethod {
 			limit := 2
-			if m.activePrompt == PromptUninstallConfirm || m.activePrompt == PromptForceReinstallConfirm {
+			if m.activePrompt == PromptUninstallConfirm || m.activePrompt == PromptForceReinstallConfirm || m.activePrompt == PromptThemeDepConfirm {
 				limit = 1
 			}
 			if m.promptSel < limit {
@@ -1021,6 +1064,41 @@ func (m TuiModel) handlePromptKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "enter":
 		pkg := m.promptPkg
 		prompt := m.activePrompt
+
+		if prompt == PromptThemeDepConfirm {
+			if m.promptSel == 0 { // Yes
+				m.activePrompt = PromptThemeDepMethod
+				methods := m.getInstallMethods(pkg)
+				selIdx := 0
+				for idx, mth := range methods {
+					if mth.Name == m.lastInstallMethod {
+						selIdx = idx
+						break
+					}
+				}
+				m.promptSel = selIdx
+				return m, nil
+			} else { // No
+				m.activePrompt = PromptNone
+				m.promptPkg = nil
+				m.activeThemeDep = ""
+				m.themeDepResolveChan <- themeDepDecision{install: false}
+				return m, nil
+			}
+		} else if prompt == PromptThemeDepMethod {
+			m.activePrompt = PromptNone
+			m.promptPkg = nil
+			m.activeThemeDep = ""
+			methods := m.getInstallMethods(pkg)
+			if m.promptSel >= 0 && m.promptSel < len(methods) {
+				selectedMethod := methods[m.promptSel].Name
+				m.lastInstallMethod = selectedMethod
+				m.themeDepResolveChan <- themeDepDecision{install: true, method: selectedMethod}
+			} else {
+				m.themeDepResolveChan <- themeDepDecision{install: false}
+			}
+			return m, nil
+		}
 
 		if len(m.promptQueue) > 0 {
 			if prompt == PromptUninstallConfirm {
@@ -2571,6 +2649,46 @@ func (m TuiModel) renderModal() string {
 		}
 		content.WriteString("\n" + subtleStyle.Render("↑↓ select  Enter confirm  Esc cancel"))
 		return modalStyle.Width(72).Render(content.String())
+	} else if m.activePrompt == PromptThemeDepMethod {
+		content.WriteString(boldStyle.Render("Install source for theme dependency: ") + accentStyle.Render(pkg.ShortName) + "\n\n")
+		methods := m.getInstallMethods(pkg)
+		for i, mth := range methods {
+			if i > 0 {
+				if mth.Name != "local" && methods[i-1].Name == "local" {
+					content.WriteString("\n  " + subtleStyle.Render(strings.Repeat("─", 62)) + "\n\n")
+				} else {
+					content.WriteString("\n")
+				}
+			}
+			var btn string
+			if i == m.promptSel {
+				btn = modalOptionActive.Render(mth.Label)
+			} else {
+				btn = modalOptionInactive.Render(mth.Label)
+			}
+			content.WriteString("  " + btn + "\n")
+			content.WriteString("    " + mutedStyle.Render(mth.Desc) + "\n")
+		}
+		content.WriteString("\n" + subtleStyle.Render("↑↓ select  Enter confirm  Esc cancel"))
+		return modalStyle.Width(72).Render(content.String())
+	} else if m.activePrompt == PromptThemeDepConfirm {
+		content.WriteString(boldStyle.Render("Theme dependency required: ") + accentStyle.Render(pkg.ShortName) + "\n")
+		content.WriteString(subtleStyle.Render("The active or queued theme requires this package to function correctly.") + "\n\n")
+		content.WriteString(boldStyle.Render("Install ") + accentStyle.Render(pkg.ShortName) + boldStyle.Render("?") + "\n\n")
+		opts := []string{"Yes, install", "No, skip"}
+		for i, opt := range opts {
+			if i == m.promptSel {
+				bg := colorAccent
+				if i == 1 {
+					bg = colorErr
+				}
+				content.WriteString(lipgloss.NewStyle().Background(bg).Foreground(lipgloss.Color("#000000")).Bold(true).Padding(0, 2).Render(" "+opt+" "))
+			} else {
+				content.WriteString(modalOptionInactive.Render(" " + opt + " "))
+			}
+			content.WriteString("  ")
+		}
+		content.WriteString("\n\n" + subtleStyle.Render("← → select  Enter confirm  Esc cancel"))
 	} else if m.activePrompt == PromptUninstallConfirm {
 		content.WriteString(boldStyle.Render("Uninstall ") + errStyle.Render(pkg.ShortName) + boldStyle.Render("?") + "\n\n")
 		opts := []string{"Yes, uninstall", "No, keep it"}
@@ -2941,6 +3059,11 @@ func (m *TuiModel) RunSetupTask(adds map[string]string, p *tea.Program) {
 								}
 							}
 						}
+						if !installed {
+							if _, exists := adds[dep]; exists {
+								installed = true
+							}
+						}
 
 						if !installed {
 							depShort := dep
@@ -2948,26 +3071,39 @@ func (m *TuiModel) RunSetupTask(adds map[string]string, p *tea.Program) {
 								depShort = dep[idx+1:]
 							}
 
-							p.Send(logLineMsg(fmt.Sprintf(">>> Installing theme dependency: %s…", depShort)))
-							depArgs := []string{desktopJs, "add", depShort}
-							if method == "npm" {
-								depArgs = append(depArgs, "--npm")
-							} else {
-								depOwner := "owdproject"
-								if m.ctx != nil && m.ctx.Settings.GithubUser != nil && *m.ctx.Settings.GithubUser != "" {
-									depOwner = *m.ctx.Settings.GithubUser
-								}
+							p.Send(logLineMsg(fmt.Sprintf(">>> Theme dependency detected: %s", depShort)))
+							p.Send(promptThemeDepMsg{
+								DepName:   dep,
+								ShortName: depShort,
+							})
 
-								var fromVal string
-								if method == "git-ssh" {
-									fromVal = fmt.Sprintf("git@github.com:%s/%s.git", depOwner, depShort)
+							decision := <-m.themeDepResolveChan
+							if decision.install {
+								p.Send(logLineMsg(fmt.Sprintf(">>> Installing theme dependency: %s via %s…", depShort, decision.method)))
+								depArgs := []string{desktopJs, "add", depShort}
+								if decision.method == "npm" {
+									depArgs = append(depArgs, "--npm")
+								} else if decision.method == "local" {
+									depArgs = append(depArgs, "--dev")
 								} else {
-									fromVal = fmt.Sprintf("https://github.com/%s/%s.git", depOwner, depShort)
+									depOwner := "owdproject"
+									if m.ctx != nil && m.ctx.Settings.GithubUser != nil && *m.ctx.Settings.GithubUser != "" {
+										depOwner = *m.ctx.Settings.GithubUser
+									}
+
+									var fromVal string
+									if decision.method == "git-ssh" {
+										fromVal = fmt.Sprintf("git@github.com:%s/%s.git", depOwner, depShort)
+									} else {
+										fromVal = fmt.Sprintf("https://github.com/%s/%s.git", depOwner, depShort)
+									}
+									depArgs = append(depArgs, "--from", fromVal)
 								}
-								depArgs = append(depArgs, "--from", fromVal)
-							}
-							if err := runProcessAndStreamLogsSilent(m.workspaceRoot, "node", depArgs, p); err != nil {
-								p.Send(logLineMsg(fmt.Sprintf(">>> Dependency %s failed: %v", depShort, err)))
+								if err := runProcessAndStreamLogsSilent(m.workspaceRoot, "node", depArgs, p); err != nil {
+									p.Send(logLineMsg(fmt.Sprintf(">>> Dependency %s failed: %v", depShort, err)))
+								}
+							} else {
+								p.Send(logLineMsg(fmt.Sprintf(">>> Skipped installing theme dependency: %s", depShort)))
 							}
 						}
 					}
