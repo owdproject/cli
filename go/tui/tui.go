@@ -768,6 +768,7 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cmd := m.startQueueReview()
 				return m, cmd
 			}
+		case "d":
 			if !m.serverRunning && !m.taskActive {
 				m.statusMsg = "Starting dev server…"
 				m.taskActive = true
@@ -2442,7 +2443,7 @@ func (m TuiModel) renderStatusBar(w int) string {
 	if m.serverRunning {
 		serverShortcut = barKeyStyle.Render("x") + barStyle.Render(" stop server")
 	} else {
-		serverShortcut = barKeyStyle.Render("s") + barStyle.Render(" start server")
+		serverShortcut = barKeyStyle.Render("d") + barStyle.Render(" start server")
 	}
 
 	if m.taskActive {
@@ -2461,11 +2462,7 @@ func (m TuiModel) renderStatusBar(w int) string {
 		barKeyStyle.Render("↑↓") + barStyle.Render(" move"),
 		barKeyStyle.Render("Space") + barStyle.Render(" toggle"),
 		barKeyStyle.Render("c") + barStyle.Render(" manage"),
-	)
-	if !m.hasPendingChanges() {
-		shortcutParts = append(shortcutParts, serverShortcut)
-	}
-	shortcutParts = append(shortcutParts,
+		serverShortcut,
 		barKeyStyle.Render("r") + barStyle.Render(" refresh"),
 		barKeyStyle.Render("q") + barStyle.Render(" quit"),
 	)
