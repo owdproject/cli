@@ -841,10 +841,17 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		case "u":
-			m.loading = true
-			m.statusMsg = "Checking for updates…"
-			m.checkingUpdates = true
-			return m, m.checkForUpdatesCmd()
+			items := m.getActiveItems()
+			if len(items) > 0 && m.selectedIndex < len(items) {
+				pkg := items[m.selectedIndex]
+				if pkg.Installed && !m.taskActive {
+					m.taskActive = true
+					m.statusMsg = fmt.Sprintf("Updating %s…", pkg.ShortName)
+					if Program != nil {
+						m.RunUpdatePackageTask(pkg.Name, pkg.ShortName, pkg.Kind, pkg.LocalSource, Program)
+					}
+				}
+			}
 		case "g":
 			if m.ctx != nil {
 				m.settingsInstallMode = m.ctx.Settings.InstallMode
@@ -2513,7 +2520,6 @@ func (m TuiModel) renderStatusBar(w int) string {
 		line1Parts = append(line1Parts, barKeyStyle.Render("s") + barStyle.Render(" save changes · "))
 	}
 	line1Parts = append(line1Parts,
-		barKeyStyle.Render("u") + barStyle.Render(" updates · "),
 		barKeyStyle.Render("g") + barStyle.Render(" settings"),
 	)
 
@@ -2540,6 +2546,18 @@ func (m TuiModel) renderStatusBar(w int) string {
 		barKeyStyle.Render("↑↓") + barStyle.Render(" move"),
 		barKeyStyle.Render("Space") + barStyle.Render(" toggle"),
 		barKeyStyle.Render("c") + barStyle.Render(" manage"),
+	)
+
+	items := m.getActiveItems()
+	hasHoveredInstalled := false
+	if len(items) > 0 && m.selectedIndex < len(items) {
+		hasHoveredInstalled = items[m.selectedIndex].Installed
+	}
+	if hasHoveredInstalled {
+		shortcutParts = append(shortcutParts, barKeyStyle.Render("u") + barStyle.Render(" update"))
+	}
+
+	shortcutParts = append(shortcutParts,
 		serverShortcut,
 		barKeyStyle.Render("r") + barStyle.Render(" refresh"),
 		barKeyStyle.Render("q") + barStyle.Render(" quit"),
@@ -3119,6 +3137,61 @@ func (m *TuiModel) RunSetupTask(adds map[string]string, p *tea.Program) {
 		}
 
 		// 3. Rebuild stubs
+		p.Send(logLineMsg(">>> Rebuilding stubs…"))
+		if err := runProcessAndStreamLogsSilent(m.workspaceRoot, "pnpm", []string{"run", "prepare:modules"}, p); err != nil {
+			p.Send(taskFinishedMsg{Success: false, Err: err})
+			return
+		}
+
+		p.Send(taskFinishedMsg{Success: true})
+	}()
+}
+
+func (m *TuiModel) RunUpdatePackageTask(pkgName string, shortName string, kind string, isLocalSource bool, p *tea.Program) {
+	go func() {
+		p.Send(clearLogsMsg{})
+		p.Send(logLineMsg(fmt.Sprintf(">>> Starting update for %s…", shortName)))
+
+		desktopJs := filepath.Join(m.workspaceRoot, "packages", "cli", "bin", "desktop.js")
+
+		if isLocalSource {
+			kindDir := ""
+			switch kind {
+			case "app":
+				kindDir = "apps"
+			case "module":
+				kindDir = "packages"
+			case "theme":
+				kindDir = "themes"
+			}
+
+			if kindDir != "" {
+				pkgPath := filepath.Join(m.workspaceRoot, kindDir, shortName)
+				p.Send(logLineMsg(fmt.Sprintf(">>> Running git pull in %s…", pkgPath)))
+				if err := runProcessAndStreamLogsSilent(pkgPath, "git", []string{"pull"}, p); err != nil {
+					p.Send(logLineMsg(fmt.Sprintf(">>> Git pull failed: %v", err)))
+					p.Send(taskFinishedMsg{Success: false, Err: err})
+					return
+				}
+			}
+		} else {
+			p.Send(logLineMsg(fmt.Sprintf(">>> Re-installing %s from NPM to get latest version…", shortName)))
+			args := []string{desktopJs, "add", shortName, "--npm"}
+			if err := runProcessAndStreamLogsSilent(m.workspaceRoot, "node", args, p); err != nil {
+				p.Send(logLineMsg(fmt.Sprintf(">>> NPM update failed: %v", err)))
+				p.Send(taskFinishedMsg{Success: false, Err: err})
+				return
+			}
+		}
+
+		// Run pnpm install
+		p.Send(logLineMsg(">>> Running pnpm install (syncing workspace)…"))
+		if err := runProcessAndStreamLogsSilent(m.workspaceRoot, "pnpm", []string{"install"}, p); err != nil {
+			p.Send(taskFinishedMsg{Success: false, Err: err})
+			return
+		}
+
+		// Rebuild stubs
 		p.Send(logLineMsg(">>> Rebuilding stubs…"))
 		if err := runProcessAndStreamLogsSilent(m.workspaceRoot, "pnpm", []string{"run", "prepare:modules"}, p); err != nil {
 			p.Send(taskFinishedMsg{Success: false, Err: err})
