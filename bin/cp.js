@@ -1410,6 +1410,7 @@ export async function runCp(commandName = 'desktop') {
         const newConfig = readDesktopConfig(paths.config, workspaceRoot)
         configError = null
         if (!areConfigsEqual(config, newConfig)) {
+          const oldTheme = config ? config.theme : null
           config = newConfig
           deps = readDesktopDependencies(paths.packageJson)
 
@@ -1420,7 +1421,7 @@ export async function runCp(commandName = 'desktop') {
               pendingPackages.delete(name)
             }
           }
-          if (pendingTheme === config.theme || !pendingTheme) {
+          if (pendingTheme === oldTheme || !pendingTheme) {
             pendingTheme = config.theme
           }
 

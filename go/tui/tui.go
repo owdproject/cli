@@ -2,11 +2,13 @@ package tui
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"math/rand"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -178,6 +180,14 @@ var ServerCmd *exec.Cmd
 // Model
 // ─────────────────────────────────────────────
 
+type pendingDecision struct {
+	PkgName   string
+	ShortName string
+	Action    string // "install" or "uninstall"
+	Kind      string // "app", "module", "theme"
+	Entry     bridge.CatalogEntry
+}
+
 type TuiModel struct {
 	workspaceRoot string
 	ctx           *bridge.WorkspaceContext
@@ -225,6 +235,17 @@ type TuiModel struct {
 
 	lastInstallMethod string
 	logTailerStarted  bool
+
+	// Queued changes
+	pendingPackages map[string]bool // pkgName -> install(true)/uninstall(false)
+	pendingTheme    *string         // pointer to theme name to activate
+
+	// Wizard / Review Queue
+	promptQueue      []pendingDecision
+	promptQueueIndex int
+	finalizedAdds    map[string]string // pkgName -> method
+	finalizedRemoves []string          // pkgNames
+	finalizedTheme   *string           // theme name to activate
 }
 
 func NewModel(root string) TuiModel {
@@ -242,6 +263,9 @@ func NewModel(root string) TuiModel {
 		termHeight:       40,
 		lastInstallMethod: "npm",
 		logTailerStarted:  false,
+		pendingPackages:  make(map[string]bool),
+		pendingTheme:     nil,
+		finalizedAdds:    make(map[string]string),
 	}
 }
 
@@ -287,30 +311,357 @@ func (m TuiModel) loadCatalogCmd(force bool) tea.Cmd {
 	}
 }
 
+func isPortOpen(port int) bool {
+	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 500*time.Millisecond)
+	if err != nil {
+		return false
+	}
+	conn.Close()
+	return true
+}
+
+func findProcessPID(port int) int {
+	// Try lsof first with TCP:LISTEN filter to get only the listening process
+	cmd := exec.Command("lsof", "-t", "-i", fmt.Sprintf(":%d", port), "-sTCP:LISTEN")
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+	if err := cmd.Run(); err == nil {
+		var pid int
+		if _, err := fmt.Sscanf(strings.TrimSpace(stdout.String()), "%d", &pid); err == nil && pid > 0 {
+			return pid
+		}
+	}
+
+	// Try pgrep patterns
+	patterns := []string{
+		"nuxt dev",
+		"nuxi dev",
+		"nuxt.mjs dev",
+		"nuxi.mjs dev",
+		"nx run desktop:serve",
+	}
+	for _, pat := range patterns {
+		cmd = exec.Command("pgrep", "-f", pat)
+		stdout.Reset()
+		cmd.Stdout = &stdout
+		if err := cmd.Run(); err == nil {
+			lines := strings.Split(stdout.String(), "\n")
+			for _, line := range lines {
+				line = strings.TrimSpace(line)
+				if line == "" {
+					continue
+				}
+				var pid int
+				if _, err := fmt.Sscanf(line, "%d", &pid); err == nil && pid > 0 {
+					return pid
+				}
+			}
+		}
+	}
+	return 0
+}
+
+func (m TuiModel) rebootServerCmd() tea.Cmd {
+	return func() tea.Msg {
+		if Program != nil {
+			Program.Send(logLineMsg(">>> Theme change detected. Rebooting dev server…"))
+			m.StopServeTask(Program)
+			time.Sleep(1500 * time.Millisecond)
+			m.RunServeTask(Program)
+		}
+		return nil
+	}
+}
+
 func (m TuiModel) checkServerStatusCmd() tea.Cmd {
 	return func() tea.Msg {
 		if m.ctx == nil {
 			return serverStatusMsg{Running: false}
 		}
 
-		pidPath := filepath.Join(m.ctx.Paths.MetaDir, "dev.pid")
-		data, err := os.ReadFile(pidPath)
-		if err != nil {
+		port := m.ctx.Settings.DevPort
+		if port == 0 {
+			port = 3000
+		}
+
+		open := isPortOpen(port)
+		if !open {
+			pidPath := filepath.Join(m.ctx.Paths.MetaDir, "dev.pid")
+			_ = os.Remove(pidPath)
 			return serverStatusMsg{Running: false}
 		}
 
-		var pid int
-		if _, err := fmt.Sscanf(strings.TrimSpace(string(data)), "%d", &pid); err != nil {
-			return serverStatusMsg{Running: false}
+		pid := findProcessPID(port)
+		if pid > 0 {
+			pidPath := filepath.Join(m.ctx.Paths.MetaDir, "dev.pid")
+			_ = os.WriteFile(pidPath, []byte(fmt.Sprintf("%d", pid)), 0644)
 		}
 
-		process, err := os.FindProcess(pid)
-		if err != nil {
-			return serverStatusMsg{Running: false}
+		return serverStatusMsg{Running: true}
+	}
+}
+
+func (m TuiModel) hasPendingChanges() bool {
+	if len(m.pendingPackages) > 0 {
+		return true
+	}
+	if m.pendingTheme != nil {
+		if m.ctx != nil && m.ctx.Config.Theme != nil {
+			return *m.ctx.Config.Theme != *m.pendingTheme
+		}
+		return true
+	}
+	return false
+}
+
+func (m *TuiModel) startQueueReview() tea.Cmd {
+	m.promptQueue = []pendingDecision{}
+	m.promptQueueIndex = 0
+	m.finalizedAdds = make(map[string]string)
+	m.finalizedRemoves = []string{}
+	m.finalizedTheme = nil
+
+	for name, on := range m.pendingPackages {
+		var entry *bridge.CatalogEntry
+		if m.catalog != nil {
+			for _, e := range m.catalog.Entries {
+				if e.Name == name {
+					entry = &e
+					break
+				}
+			}
+		}
+		if entry == nil {
+			continue
 		}
 
-		err = process.Signal(syscall.Signal(0))
-		return serverStatusMsg{Running: err == nil}
+		if on {
+			m.promptQueue = append(m.promptQueue, pendingDecision{
+				PkgName:   entry.Name,
+				ShortName: entry.ShortName,
+				Action:    "install",
+				Kind:      entry.Kind,
+				Entry:     *entry,
+			})
+		} else {
+			m.promptQueue = append(m.promptQueue, pendingDecision{
+				PkgName:   entry.Name,
+				ShortName: entry.ShortName,
+				Action:    "uninstall",
+				Kind:      entry.Kind,
+				Entry:     *entry,
+			})
+		}
+	}
+
+	if m.pendingTheme != nil {
+		var entry *bridge.CatalogEntry
+		if m.catalog != nil {
+			for _, e := range m.catalog.Entries {
+				if e.Name == *m.pendingTheme {
+					entry = &e
+					break
+				}
+			}
+		}
+		if entry != nil {
+			m.promptQueue = append(m.promptQueue, pendingDecision{
+				PkgName:   entry.Name,
+				ShortName: entry.ShortName,
+				Action:    "install",
+				Kind:      "theme",
+				Entry:     *entry,
+			})
+		}
+	}
+
+	if len(m.promptQueue) == 0 {
+		m.activePrompt = PromptNone
+		return nil
+	}
+
+	return m.processNextQueueDecision()
+}
+
+func (m *TuiModel) processNextQueueDecision() tea.Cmd {
+	if m.promptQueueIndex >= len(m.promptQueue) {
+		m.activePrompt = PromptNone
+		return m.applyQueueChangesCmd()
+	}
+
+	dec := m.promptQueue[m.promptQueueIndex]
+	m.promptPkg = &dec.Entry
+
+	if dec.Action == "uninstall" {
+		m.activePrompt = PromptUninstallConfirm
+		m.promptSel = 1 // default to No
+		return nil
+	}
+
+	// For themes already installed in the workspace, we don't need to ask for install method!
+	if dec.Kind == "theme" && (dec.Entry.LocalSource || dec.Entry.InPackageJson) {
+		themeName := dec.PkgName
+		m.finalizedTheme = &themeName
+		m.promptQueueIndex++
+		return m.processNextQueueDecision()
+	}
+
+	m.activePrompt = PromptInstallMethod
+	methods := m.getInstallMethods(&dec.Entry)
+	selIdx := 0
+	for idx, mth := range methods {
+		if mth.Name == m.lastInstallMethod {
+			selIdx = idx
+			break
+		}
+	}
+	m.promptSel = selIdx
+	return nil
+}
+
+func (m *TuiModel) applyQueueChangesCmd() tea.Cmd {
+	m.taskActive = true
+	m.statusMsg = "Applying queued package changes…"
+	m.addLog(">>> Applying queued package configuration changes…")
+
+	payload := &bridge.WritePayload{
+		Config:       &bridge.Config{Theme: m.ctx.Config.Theme, Apps: m.ctx.Config.Apps, Modules: m.ctx.Config.Modules},
+		DepsToAdd:    make(map[string]string),
+		DepsToRemove: []string{},
+	}
+
+	// 1. Process removals
+	for _, name := range m.finalizedRemoves {
+		payload.DepsToRemove = append(payload.DepsToRemove, name)
+
+		var nextApps []string
+		for _, a := range payload.Config.Apps {
+			if a != name {
+				nextApps = append(nextApps, a)
+			}
+		}
+		payload.Config.Apps = nextApps
+
+		var nextModules []string
+		for _, mod := range payload.Config.Modules {
+			if mod != name {
+				nextModules = append(nextModules, mod)
+			}
+		}
+		payload.Config.Modules = nextModules
+	}
+
+	// 2. Process theme removal (if active theme was uninstalled):
+	for _, name := range m.finalizedRemoves {
+		if payload.Config.Theme != nil && *payload.Config.Theme == name {
+			e := ""
+			payload.Config.Theme = &e
+		}
+	}
+
+	// 3. Process additions
+	for name, method := range m.finalizedAdds {
+		var entry *bridge.CatalogEntry
+		if m.catalog != nil {
+			for _, e := range m.catalog.Entries {
+				if e.Name == name {
+					entry = &e
+					break
+				}
+			}
+		}
+		version := "latest"
+		if entry != nil && entry.Version != nil {
+			version = *entry.Version
+		}
+
+		if method == "npm" {
+			payload.DepsToAdd[name] = version
+		} else if method == "local" {
+			payload.DepsToAdd[name] = "workspace:*"
+		} else {
+			user := "owdproject"
+			if m.ctx != nil && m.ctx.Settings.GithubUser != nil && *m.ctx.Settings.GithubUser != "" {
+				user = *m.ctx.Settings.GithubUser
+			}
+			var shortName string
+			if entry != nil {
+				shortName = entry.ShortName
+			} else {
+				shortName = name[strings.LastIndex(name, "/")+1:]
+			}
+			var gitUrl string
+			if method == "git-ssh" {
+				gitUrl = fmt.Sprintf("git@github.com:%s/%s.git", user, shortName)
+			} else {
+				gitUrl = fmt.Sprintf("https://github.com/%s/%s.git", user, shortName)
+			}
+			payload.DepsToAdd[name] = "workspace:*"
+
+			if m.ctx != nil {
+				settings := m.ctx.Settings
+				if settings.LastInstallChoices == nil {
+					settings.LastInstallChoices = make(map[string]interface{})
+				}
+				settings.LastInstallChoices[name] = map[string]string{"type": "git", "gitUrl": gitUrl}
+				payload.Settings = &settings
+			}
+		}
+
+		if entry != nil {
+			if entry.Kind == "app" {
+				found := false
+				for _, a := range payload.Config.Apps {
+					if a == name {
+						found = true
+						break
+					}
+				}
+				if !found {
+					payload.Config.Apps = append(payload.Config.Apps, name)
+				}
+			} else if entry.Kind == "module" {
+				found := false
+				for _, mod := range payload.Config.Modules {
+					if mod == name {
+						found = true
+						break
+					}
+				}
+				if !found {
+					payload.Config.Modules = append(payload.Config.Modules, name)
+				}
+			} else if entry.Kind == "theme" {
+				themeName := name
+				payload.Config.Theme = &themeName
+			}
+		}
+	}
+
+	// 4. Process theme change
+	if m.finalizedTheme != nil {
+		payload.Config.Theme = m.finalizedTheme
+	}
+
+	// Capture variables for the closure
+	finalAdds := m.finalizedAdds
+
+	// Clear pending changes
+	m.pendingPackages = make(map[string]bool)
+	m.pendingTheme = nil
+
+	return func() tea.Msg {
+		// Write changes
+		if err := bridge.WriteChanges(m.workspaceRoot, payload); err != nil {
+			return taskFinishedMsg{Success: false, Err: err}
+		}
+
+		// Trigger setup task
+		if Program != nil {
+			m.RunSetupTask(finalAdds, Program)
+		}
+
+		return nil
 	}
 }
 
@@ -332,6 +683,7 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.blink = !m.blink
 		}
 		
+		var statusCmd tea.Cmd
 		if m.tickCount%10 == 0 {
 			// Sample Nuxt process memory stats
 			var mb int
@@ -348,13 +700,22 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if len(m.memHistory) > 30 {
 				m.memHistory = m.memHistory[1:]
 			}
+			if m.ctx != nil {
+				statusCmd = m.checkServerStatusCmd()
+			}
 		}
 		
 		if m.tickCount%100 == 0 && !m.loading && !m.taskActive && !m.checkingUpdates {
 			m.checkingUpdates = true
+			if statusCmd != nil {
+				return m, tea.Batch(tickCmd(), statusCmd, m.checkForUpdatesCmd())
+			}
 			return m, tea.Batch(tickCmd(), m.checkForUpdatesCmd())
 		}
 		
+		if statusCmd != nil {
+			return m, tea.Batch(tickCmd(), statusCmd)
+		}
 		return m, tickCmd()
 
 	case tea.KeyMsg:
@@ -403,6 +764,10 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.statusMsg = "Refreshing package catalog…"
 			return m, m.loadCatalogCmd(true)
 		case "s":
+			if m.hasPendingChanges() {
+				cmd := m.startQueueReview()
+				return m, cmd
+			}
 			if !m.serverRunning && !m.taskActive {
 				m.statusMsg = "Starting dev server…"
 				m.taskActive = true
@@ -431,21 +796,31 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			items := m.getActiveItems()
 			if len(items) > 0 && m.selectedIndex < len(items) {
 				pkg := items[m.selectedIndex]
-				m.promptPkg = &pkg
-				if pkg.Installed {
-					m.activePrompt = PromptUninstallConfirm
-					m.promptSel = 1
-				} else {
-					m.activePrompt = PromptInstallMethod
-					methods := m.getInstallMethods(&pkg)
-					selIdx := 0
-					for idx, mth := range methods {
-						if mth.Name == m.lastInstallMethod {
-							selIdx = idx
-							break
+				if m.activeTab == 3 { // Themes (radiobox)
+					active := false
+					if m.ctx != nil && m.ctx.Config.Theme != nil && *m.ctx.Config.Theme == pkg.Name {
+						active = true
+					}
+					if active {
+						m.pendingTheme = nil
+					} else {
+						themeName := pkg.Name
+						m.pendingTheme = &themeName
+					}
+				} else { // Apps or Modules (checkbox)
+					if pkg.Installed {
+						if _, exists := m.pendingPackages[pkg.Name]; exists {
+							delete(m.pendingPackages, pkg.Name)
+						} else {
+							m.pendingPackages[pkg.Name] = false
+						}
+					} else {
+						if _, exists := m.pendingPackages[pkg.Name]; exists {
+							delete(m.pendingPackages, pkg.Name)
+						} else {
+							m.pendingPackages[pkg.Name] = true
 						}
 					}
-					m.promptSel = selIdx
 				}
 			}
 		case "u":
@@ -469,6 +844,15 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.err = msg.Err
 			m.statusMsg = fmt.Sprintf("Error loading workspace: %v", msg.Err)
 		} else {
+			themeChanged := false
+			if m.ctx != nil && m.ctx.Config.Theme != nil && msg.Ctx.Config.Theme != nil {
+				if *m.ctx.Config.Theme != *msg.Ctx.Config.Theme {
+					themeChanged = true
+				}
+			} else if (m.ctx != nil && m.ctx.Config.Theme == nil && msg.Ctx.Config.Theme != nil) || (m.ctx != nil && m.ctx.Config.Theme != nil && msg.Ctx.Config.Theme == nil) {
+				themeChanged = true
+			}
+
 			m.ctx = msg.Ctx
 			m.statusMsg = "Workspace loaded."
 
@@ -477,6 +861,13 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				logPath := filepath.Join(m.ctx.Paths.MetaDir, "dev.log")
 				StartLogTailer(logPath, Program)
 			}
+
+			if themeChanged && m.serverRunning {
+				m.statusMsg = "Rebooting server for theme change…"
+				m.taskActive = true
+				return m, m.rebootServerCmd()
+			}
+			return m, m.checkServerStatusCmd()
 		}
 
 	case catalogLoadedMsg:
@@ -563,6 +954,8 @@ func (m TuiModel) handlePromptKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "esc", "q":
 		m.activePrompt = PromptNone
 		m.promptPkg = nil
+		m.promptQueue = nil
+		m.promptQueueIndex = 0
 		return m, nil
 	case "up", "k":
 		if m.activePrompt == PromptManagePackage {
@@ -627,6 +1020,27 @@ func (m TuiModel) handlePromptKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "enter":
 		pkg := m.promptPkg
 		prompt := m.activePrompt
+
+		if len(m.promptQueue) > 0 {
+			if prompt == PromptUninstallConfirm {
+				if m.promptSel == 0 { // Yes
+					m.finalizedRemoves = append(m.finalizedRemoves, pkg.Name)
+				}
+				m.promptQueueIndex++
+				cmd := m.processNextQueueDecision()
+				return m, cmd
+			} else if prompt == PromptInstallMethod {
+				methods := m.getInstallMethods(pkg)
+				if m.promptSel >= 0 && m.promptSel < len(methods) {
+					m.lastInstallMethod = methods[m.promptSel].Name
+					m.finalizedAdds[pkg.Name] = methods[m.promptSel].Name
+				}
+				m.promptQueueIndex++
+				cmd := m.processNextQueueDecision()
+				return m, cmd
+			}
+			return m, nil
+		}
 
 		if prompt == PromptUninstallConfirm {
 			m.activePrompt = PromptNone
@@ -772,7 +1186,7 @@ func (m TuiModel) triggerUninstall(pkg *bridge.CatalogEntry) (tea.Model, tea.Cmd
 		return m, nil
 	}
 	if Program != nil {
-		m.RunUninstallTask(Program)
+		m.RunSetupTask(make(map[string]string), Program)
 	}
 	return m, nil
 }
@@ -829,7 +1243,7 @@ func (m TuiModel) triggerInstall(pkg *bridge.CatalogEntry, method string) (tea.M
 		return m, nil
 	}
 	if Program != nil {
-		m.RunInstallTask(pkg.Name, method, Program)
+		m.RunSetupTask(map[string]string{pkg.Name: method}, Program)
 	}
 	return m, nil
 }
@@ -875,7 +1289,7 @@ func (m TuiModel) triggerForceReinstall(pkg *bridge.CatalogEntry) (tea.Model, te
 	}
 
 	if Program != nil {
-		m.RunInstallTask(pkg.Name, method, Program)
+		m.RunSetupTask(map[string]string{pkg.Name: method}, Program)
 	}
 	return m, nil
 }
@@ -1731,10 +2145,57 @@ func max(a, b int) int {
 }
 
 func (m TuiModel) renderCatalogRow(item bridge.CatalogEntry, selected bool, w, nameW int) string {
-	badge := uninstalledBadge + " "
-	if item.Installed {
-		badge = installedBadge + " "
+	var badge string
+	if item.Kind == "theme" {
+		// Radiobox
+		active := false
+		if m.ctx != nil && m.ctx.Config.Theme != nil && *m.ctx.Config.Theme == item.Name {
+			active = true
+		}
+
+		pending := false
+		if m.pendingTheme != nil && *m.pendingTheme == item.Name {
+			pending = true
+		}
+
+		if pending {
+			if active {
+				badge = subtleStyle.Render("(") + accentStyle.Render("●") + subtleStyle.Render(")")
+			} else {
+				badge = subtleStyle.Render("(") + lipgloss.NewStyle().Foreground(colorCyan).Bold(true).Render("+") + subtleStyle.Render(")")
+			}
+		} else {
+			if active && m.pendingTheme == nil {
+				badge = subtleStyle.Render("(") + accentStyle.Render("●") + subtleStyle.Render(")")
+			} else {
+				badge = subtleStyle.Render("( )")
+			}
+		}
+	} else {
+		// Checkbox
+		installed := item.Installed
+		pendingAdd := false
+		pendingRemove := false
+
+		if on, pending := m.pendingPackages[item.Name]; pending {
+			if on {
+				pendingAdd = true
+			} else {
+				pendingRemove = true
+			}
+		}
+
+		if pendingAdd {
+			badge = subtleStyle.Render("[") + lipgloss.NewStyle().Foreground(colorCyan).Bold(true).Render("+") + subtleStyle.Render("]")
+		} else if pendingRemove {
+			badge = subtleStyle.Render("[") + lipgloss.NewStyle().Foreground(colorErr).Bold(true).Render("-") + subtleStyle.Render("]")
+		} else if installed {
+			badge = subtleStyle.Render("[") + accentStyle.Render("●") + subtleStyle.Render("]")
+		} else {
+			badge = subtleStyle.Render("[ ]")
+		}
 	}
+	badge += " "
 
 	name := truncate(item.ShortName, nameW)
 
@@ -1968,9 +2429,14 @@ func (m TuiModel) renderStatusBar(w int) string {
 
 	line1Parts := []string{
 		statusIcon + barKeyStyle.Render("Select packages") + barStyle.Render(" · "),
+	}
+	if m.hasPendingChanges() {
+		line1Parts = append(line1Parts, barKeyStyle.Render("s") + barStyle.Render(" save changes · "))
+	}
+	line1Parts = append(line1Parts,
 		barKeyStyle.Render("u") + barStyle.Render(" updates · "),
 		barKeyStyle.Render("g") + barStyle.Render(" settings"),
-	}
+	)
 
 	var serverShortcut string
 	if m.serverRunning {
@@ -1990,14 +2456,19 @@ func (m TuiModel) renderStatusBar(w int) string {
 
 	// Line 2: shortcuts
 	sep := barSepStyle.Render(" │ ")
-	shortcutParts := []string{
+	var shortcutParts []string
+	shortcutParts = append(shortcutParts,
 		barKeyStyle.Render("↑↓") + barStyle.Render(" move"),
 		barKeyStyle.Render("Space") + barStyle.Render(" toggle"),
 		barKeyStyle.Render("c") + barStyle.Render(" manage"),
-		serverShortcut,
+	)
+	if !m.hasPendingChanges() {
+		shortcutParts = append(shortcutParts, serverShortcut)
+	}
+	shortcutParts = append(shortcutParts,
 		barKeyStyle.Render("r") + barStyle.Render(" refresh"),
 		barKeyStyle.Render("q") + barStyle.Render(" quit"),
-	}
+	)
 	line2 := barStyle.Width(w).Render(strings.Join(shortcutParts, sep))
 
 	return "\n\n" + line1 + "\n" + line2 + "\n"
@@ -2386,109 +2857,141 @@ func runProcessAndStreamLogs(root, command string, args []string, p *tea.Program
 	p.Send(taskFinishedMsg{Success: err == nil, Err: err})
 }
 
-func (m *TuiModel) RunInstallTask(pkgName string, method string, p *tea.Program) {
-	go func() {
-		shortName := pkgName
-		if idx := strings.LastIndex(pkgName, "/"); idx >= 0 {
-			shortName = pkgName[idx+1:]
+func runProcessAndStreamLogsSilent(root, command string, args []string, p *tea.Program) error {
+	cmd := exec.Command(command, args...)
+	cmd.Dir = root
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return err
+	}
+	cmd.Stderr = cmd.Stdout
+
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+
+	reader := bufio.NewReader(stdout)
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			break
 		}
+		p.Send(logLineMsg(strings.TrimRight(line, "\r\n")))
+	}
 
-		desktopJs := filepath.Join(m.workspaceRoot, "packages", "cli", "bin", "desktop.js")
-
-		// Build arguments
-		args := []string{desktopJs, "add", shortName}
-		if method == "npm" {
-			args = append(args, "--npm")
-		} else if method == "local" {
-			args = append(args, "--dev")
-		} else {
-			// Find org/owner
-			owner := "owdproject"
-			if m.ctx != nil && m.ctx.Settings.GithubUser != nil && *m.ctx.Settings.GithubUser != "" {
-				owner = *m.ctx.Settings.GithubUser
-			} else if m.catalog != nil {
-				for _, e := range m.catalog.Entries {
-					if e.Name == pkgName && e.Org != "" {
-						owner = e.Org
-						break
-					}
-				}
-			}
-
-			var fromVal string
-			if method == "git-ssh" {
-				fromVal = fmt.Sprintf("git@github.com:%s/%s.git", owner, shortName)
-			} else {
-				fromVal = fmt.Sprintf("https://github.com/%s/%s.git", owner, shortName)
-			}
-			args = append(args, "--from", fromVal)
-		}
-
-		p.Send(logLineMsg(fmt.Sprintf(">>> Executing: node desktop.js add %s", shortName)))
-		runProcessAndStreamLogs(m.workspaceRoot, "node", args, p)
-
-		// Check if it's a theme and resolve dependencies!
-		isTheme := strings.HasPrefix(shortName, "theme-")
-		if isTheme {
-			p.Send(logLineMsg(">>> Resolving theme dependencies…"))
-			deps, err := getThemeDependencies(m.workspaceRoot, shortName)
-			if err == nil {
-				for _, dep := range deps {
-					// Check if already installed in context
-					installed := false
-					if m.ctx != nil {
-						for _, d := range m.ctx.Deps {
-							if d == dep {
-								installed = true
-								break
-							}
-						}
-					}
-
-					if !installed {
-						depShort := dep
-						if idx := strings.LastIndex(dep, "/"); idx >= 0 {
-							depShort = dep[idx+1:]
-						}
-
-						p.Send(logLineMsg(fmt.Sprintf(">>> Installing theme dependency: %s…", depShort)))
-						depArgs := []string{desktopJs, "add", depShort}
-						if method == "npm" {
-							depArgs = append(depArgs, "--npm")
-						} else {
-							depOwner := "owdproject"
-							if m.ctx != nil && m.ctx.Settings.GithubUser != nil && *m.ctx.Settings.GithubUser != "" {
-								depOwner = *m.ctx.Settings.GithubUser
-							}
-
-							var fromVal string
-							if method == "git-ssh" {
-								fromVal = fmt.Sprintf("git@github.com:%s/%s.git", depOwner, depShort)
-							} else {
-								fromVal = fmt.Sprintf("https://github.com/%s/%s.git", depOwner, depShort)
-							}
-							depArgs = append(depArgs, "--from", fromVal)
-						}
-						runProcessAndStreamLogs(m.workspaceRoot, "node", depArgs, p)
-					}
-				}
-			}
-		}
-
-		// Rebuild stubs
-		p.Send(logLineMsg(">>> Rebuilding stubs…"))
-		runProcessAndStreamLogs(m.workspaceRoot, "pnpm", []string{"run", "prepare:modules"}, p)
-
-		p.Send(taskFinishedMsg{Success: true})
-	}()
+	return cmd.Wait()
 }
 
-func (m *TuiModel) RunUninstallTask(p *tea.Program) {
+func (m *TuiModel) RunSetupTask(adds map[string]string, p *tea.Program) {
 	go func() {
-		p.Send(logLineMsg(">>> Running pnpm install (cleanup)…"))
-		runProcessAndStreamLogs(m.workspaceRoot, "pnpm", []string{"install"}, p)
-		p.Send(logLineMsg(">>> Preparing workspace modules…"))
-		runProcessAndStreamLogs(m.workspaceRoot, "pnpm", []string{"run", "prepare:modules"}, p)
+		desktopJs := filepath.Join(m.workspaceRoot, "packages", "cli", "bin", "desktop.js")
+
+		// 1. Process all additions
+		for pkgName, method := range adds {
+			shortName := pkgName
+			if idx := strings.LastIndex(pkgName, "/"); idx >= 0 {
+				shortName = pkgName[idx+1:]
+			}
+
+			args := []string{desktopJs, "add", shortName}
+			if method == "npm" {
+				args = append(args, "--npm")
+			} else if method == "local" {
+				args = append(args, "--dev")
+			} else {
+				owner := "owdproject"
+				if m.ctx != nil && m.ctx.Settings.GithubUser != nil && *m.ctx.Settings.GithubUser != "" {
+					owner = *m.ctx.Settings.GithubUser
+				} else if m.catalog != nil {
+					for _, e := range m.catalog.Entries {
+						if e.Name == pkgName && e.Org != "" {
+							owner = e.Org
+							break
+						}
+					}
+				}
+
+				var fromVal string
+				if method == "git-ssh" {
+					fromVal = fmt.Sprintf("git@github.com:%s/%s.git", owner, shortName)
+				} else {
+					fromVal = fmt.Sprintf("https://github.com/%s/%s.git", owner, shortName)
+				}
+				args = append(args, "--from", fromVal)
+			}
+
+			p.Send(logLineMsg(fmt.Sprintf(">>> Executing: node desktop.js add %s via %s", shortName, method)))
+			if err := runProcessAndStreamLogsSilent(m.workspaceRoot, "node", args, p); err != nil {
+				p.Send(logLineMsg(fmt.Sprintf(">>> Add %s failed: %v", shortName, err)))
+				p.Send(taskFinishedMsg{Success: false, Err: err})
+				return
+			}
+
+			// Resolve theme dependencies if it's a theme
+			isTheme := strings.HasPrefix(shortName, "theme-")
+			if isTheme {
+				p.Send(logLineMsg(">>> Resolving theme dependencies…"))
+				deps, err := getThemeDependencies(m.workspaceRoot, shortName)
+				if err == nil {
+					for _, dep := range deps {
+						installed := false
+						if m.ctx != nil {
+							for _, d := range m.ctx.Deps {
+								if d == dep {
+									installed = true
+									break
+								}
+							}
+						}
+
+						if !installed {
+							depShort := dep
+							if idx := strings.LastIndex(dep, "/"); idx >= 0 {
+								depShort = dep[idx+1:]
+							}
+
+							p.Send(logLineMsg(fmt.Sprintf(">>> Installing theme dependency: %s…", depShort)))
+							depArgs := []string{desktopJs, "add", depShort}
+							if method == "npm" {
+								depArgs = append(depArgs, "--npm")
+							} else {
+								depOwner := "owdproject"
+								if m.ctx != nil && m.ctx.Settings.GithubUser != nil && *m.ctx.Settings.GithubUser != "" {
+									depOwner = *m.ctx.Settings.GithubUser
+								}
+
+								var fromVal string
+								if method == "git-ssh" {
+									fromVal = fmt.Sprintf("git@github.com:%s/%s.git", depOwner, depShort)
+								} else {
+									fromVal = fmt.Sprintf("https://github.com/%s/%s.git", depOwner, depShort)
+								}
+								depArgs = append(depArgs, "--from", fromVal)
+							}
+							if err := runProcessAndStreamLogsSilent(m.workspaceRoot, "node", depArgs, p); err != nil {
+								p.Send(logLineMsg(fmt.Sprintf(">>> Dependency %s failed: %v", depShort, err)))
+							}
+						}
+					}
+				}
+			}
+		}
+
+		// 2. Run pnpm install for cleanup/removal sync
+		p.Send(logLineMsg(">>> Running pnpm install (syncing workspace)…"))
+		if err := runProcessAndStreamLogsSilent(m.workspaceRoot, "pnpm", []string{"install"}, p); err != nil {
+			p.Send(taskFinishedMsg{Success: false, Err: err})
+			return
+		}
+
+		// 3. Rebuild stubs
+		p.Send(logLineMsg(">>> Rebuilding stubs…"))
+		if err := runProcessAndStreamLogsSilent(m.workspaceRoot, "pnpm", []string{"run", "prepare:modules"}, p); err != nil {
+			p.Send(taskFinishedMsg{Success: false, Err: err})
+			return
+		}
+
 		p.Send(taskFinishedMsg{Success: true})
 	}()
 }
@@ -2568,7 +3071,9 @@ func (m *TuiModel) StopServeTask(p *tea.Program) {
 		}
 
 		_ = exec.Command("pkill", "-9", "-f", "nuxt.mjs").Run()
+		_ = exec.Command("pkill", "-9", "-f", "nuxi.mjs").Run()
 		_ = exec.Command("pkill", "-9", "-f", "nuxt dev").Run()
+		_ = exec.Command("pkill", "-9", "-f", "nuxi dev").Run()
 		_ = exec.Command("pkill", "-9", "-f", "nx run desktop:serve").Run()
 
 		p.Send(serverStatusMsg{Running: false})

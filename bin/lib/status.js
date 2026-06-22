@@ -49,6 +49,8 @@ export function findDevProcess() {
   const patterns = [
     'nuxt dev',
     'nuxi dev',
+    'nuxt\\.mjs dev',
+    'nuxi\\.mjs dev',
     'nx run desktop:serve',
     'node.*\\.nuxt',
     'desktop.*nuxt',
