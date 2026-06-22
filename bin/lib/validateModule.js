@@ -512,6 +512,51 @@ export function validateOwdModule(packageDir, options = {}) {
           'theme src/module.ts should call registerThemeTailwindPath from @owdproject/kit-primevue/kit/registerTailwindPath',
         )
       }
+
+      // Check required theme components
+      const componentsDir = join(dir, 'src', 'runtime', 'components')
+      if (!existsSync(componentsDir)) {
+        issue(
+          'error',
+          'missing-components-dir',
+          'theme src/runtime/components/ directory is required',
+        )
+      } else {
+        const foundComponents = new Set()
+        const scanComponents = (current) => {
+          for (const entry of readdirSync(current)) {
+            const full = join(current, entry)
+            let stat
+            try {
+              stat = statSync(full)
+            } catch {
+              continue
+            }
+            if (stat.isDirectory()) {
+              scanComponents(full)
+            } else if (/\.(vue|ts|js)$/i.test(entry)) {
+              const name = entry.replace(/\.(vue|ts|js)$/i, '')
+              foundComponents.add(name)
+            }
+          }
+        }
+        scanComponents(componentsDir)
+
+        const requiredComponents = [
+          'DesktopWindow',
+          'DesktopWindowNav',
+          'DesktopWindowIframe',
+        ]
+        for (const req of requiredComponents) {
+          if (!foundComponents.has(req)) {
+            issue(
+              'error',
+              `missing-theme-component-${req.toLowerCase()}`,
+              `theme must implement the "${req}" component under src/runtime/components/`,
+            )
+          }
+        }
+      }
     } else if (kind === 'app' && !hasKitTailwind) {
       issue(
         'warning',
