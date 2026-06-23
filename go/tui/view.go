@@ -28,7 +28,7 @@ func (m *TuiModel) View() string {
 
 	// Heights
 	topH := 9    // top panels row (with borders = 9 rows)
-	barH := 4    // status bar lines (including prepended/trailing newlines)
+	barH := 5    // status bar: 3 blank lines + line1 + line2 = 5 rows
 	// catalog gets the remaining height
 	catalogH := h - topH - barH
 	if catalogH < 4 {
@@ -114,7 +114,16 @@ func (m *TuiModel) View() string {
 	// ── Status bar (borderless) ───────────────────────────
 	statusBar := m.renderStatusBar(w)
 
-	return mainContent + statusBar
+	out := mainContent + statusBar
+
+	// Hard clamp: ensure the final output never exceeds termHeight lines.
+	// This is the last line of defence against terminal scrolling.
+	outLines := strings.Split(out, "\n")
+	if len(outLines) > m.termHeight {
+		out = strings.Join(outLines[:m.termHeight], "\n")
+	}
+
+	return out
 }
 
 // ─────────────────────────────────────────────
@@ -587,10 +596,10 @@ func (m *TuiModel) renderStatusBar(w int) string {
 		statusIcon + barKeyStyle.Render("Select packages") + barTextStyle.Render(" · "),
 	}
 	if m.hasPendingChanges() {
-		line1Parts = append(line1Parts, barKeyStyle.Render("s") + barTextStyle.Render(" save changes · "))
+		line1Parts = append(line1Parts, barKeyStyle.Render("s")+barTextStyle.Render(" save changes · "))
 	}
 	line1Parts = append(line1Parts,
-		barKeyStyle.Render("g") + barTextStyle.Render(" settings"),
+		barKeyStyle.Render("g")+barTextStyle.Render(" settings"),
 	)
 
 	var serverShortcut string
@@ -607,15 +616,21 @@ func (m *TuiModel) renderStatusBar(w int) string {
 	}
 
 	_ = mode
-	line1 := barStyle.Width(w).Render(strings.Join(line1Parts, ""))
+
+	// Render line1 and line2 WITHOUT Width() to prevent wrapping.
+	// Then truncate to exactly w columns using lipgloss-aware truncation.
+	line1Raw := barStyle.PaddingLeft(2).Render(strings.Join(line1Parts, ""))
+	if lipgloss.Width(line1Raw) > w {
+		line1Raw = truncate(line1Raw, w)
+	}
 
 	// Line 2: shortcuts
 	sep := barSepStyle.Render(" │ ")
 	var shortcutParts []string
 	shortcutParts = append(shortcutParts,
-		barKeyStyle.Render("↑↓") + barTextStyle.Render(" move"),
-		barKeyStyle.Render("Space") + barTextStyle.Render(" toggle"),
-		barKeyStyle.Render("c") + barTextStyle.Render(" manage"),
+		barKeyStyle.Render("↑↓")+barTextStyle.Render(" move"),
+		barKeyStyle.Render("Space")+barTextStyle.Render(" toggle"),
+		barKeyStyle.Render("c")+barTextStyle.Render(" manage"),
 	)
 
 	items := m.getActiveItems()
@@ -624,18 +639,22 @@ func (m *TuiModel) renderStatusBar(w int) string {
 		hasHoveredInstalled = items[m.selectedIndex].Installed
 	}
 	if hasHoveredInstalled {
-		shortcutParts = append(shortcutParts, barKeyStyle.Render("u") + barTextStyle.Render(" update"))
+		shortcutParts = append(shortcutParts, barKeyStyle.Render("u")+barTextStyle.Render(" update"))
 	}
 
 	shortcutParts = append(shortcutParts,
 		serverShortcut,
-		barKeyStyle.Render("r") + barTextStyle.Render(" refresh"),
-		barKeyStyle.Render("n") + barTextStyle.Render(" new"),
-		barKeyStyle.Render("q") + barTextStyle.Render(" quit"),
+		barKeyStyle.Render("r")+barTextStyle.Render(" refresh"),
+		barKeyStyle.Render("n")+barTextStyle.Render(" new"),
+		barKeyStyle.Render("q")+barTextStyle.Render(" quit"),
 	)
-	line2 := barStyle.Width(w).Render(strings.Join(shortcutParts, sep))
+	line2Raw := barStyle.PaddingLeft(2).Render(strings.Join(shortcutParts, sep))
+	if lipgloss.Width(line2Raw) > w {
+		line2Raw = truncate(line2Raw, w)
+	}
 
-	return "\n\n\n" + line1 + "\n" + line2
+	// Always return exactly 5 lines: 3 blank + line1 + line2
+	return "\n\n\n" + line1Raw + "\n" + line2Raw
 }
 
 func (m *TuiModel) getActiveItems() []bridge.CatalogEntry {

@@ -388,10 +388,52 @@ func countLocalDirs(root, subdir string, excludePrefixes ...string) int {
 }
 
 func truncate(s string, max int) string {
-	if len(s) <= max {
+	if max <= 0 {
+		return ""
+	}
+
+	// If the printable width fits, return as-is
+	if lipgloss.Width(s) <= max {
 		return s
 	}
-	return s[:max-1] + "…"
+
+	var result strings.Builder
+	visibleLen := 0
+	inEsc := false
+
+	runes := []rune(s)
+	n := len(runes)
+
+	for i := 0; i < n; i++ {
+		r := runes[i]
+		if r == '\x1b' {
+			inEsc = true
+			result.WriteRune(r)
+			continue
+		}
+		if inEsc {
+			result.WriteRune(r)
+			if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
+				inEsc = false
+			}
+			continue
+		}
+
+		w := 1
+		if r > 0x1100 && (r < 0x115f || r > 0x2329) {
+			w = 2
+		}
+
+		if visibleLen+w > max-1 {
+			result.WriteString("\x1b[0m…")
+			return result.String()
+		}
+
+		result.WriteRune(r)
+		visibleLen += w
+	}
+
+	return result.String()
 }
 
 func padRight(s string, width int) string {
