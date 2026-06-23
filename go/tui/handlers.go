@@ -440,10 +440,15 @@ func (m *TuiModel) triggerUpdate(pkg *bridge.CatalogEntry) (tea.Model, tea.Cmd) 
 	m.statusMsg = fmt.Sprintf("Updating %s…", pkg.ShortName)
 	m.addLog(fmt.Sprintf(">>> Updating %s", pkg.Name))
 
+	workspaceRoot := m.workspaceRoot
+	runtime := m.runtime
+	pkgName := pkg.Name
+	short := pkg.ShortName
+	kind := pkg.Kind
+
 	go func() {
-		short := pkg.ShortName
 		kindDir := ""
-		switch pkg.Kind {
+		switch kind {
 		case "app":
 			kindDir = "apps"
 		case "module":
@@ -452,23 +457,23 @@ func (m *TuiModel) triggerUpdate(pkg *bridge.CatalogEntry) (tea.Model, tea.Cmd) 
 			kindDir = "themes"
 		}
 		if kindDir != "" {
-			pkgPath := filepath.Join(m.workspaceRoot, kindDir, short)
+			pkgPath := filepath.Join(workspaceRoot, kindDir, short)
 			gitDir := filepath.Join(pkgPath, ".git")
 			if _, err := os.Stat(gitDir); err == nil {
-				m.runtime.msgChan <- logLineMsg(">>> Local Git repository detected. Running git pull…")
-				m.runProcessAndStreamLogs(pkgPath, "git", []string{"pull"})
+				runtime.msgChan <- logLineMsg(">>> Local Git repository detected. Running git pull…")
+				runtime.runProcessAndStreamLogs(pkgPath, "git", []string{"pull"})
 				return
 			}
 		}
 
-		m.runtime.msgChan <- logLineMsg(fmt.Sprintf(">>> Running pnpm install %s@latest…", pkg.Name))
-		if err := m.runProcessAndStreamLogsSilent(m.workspaceRoot, "pnpm", []string{"install", pkg.Name + "@latest"}); err != nil {
-			m.runtime.msgChan <- taskFinishedMsg{Success: false, Err: err}
+		runtime.msgChan <- logLineMsg(fmt.Sprintf(">>> Running pnpm install %s@latest…", pkgName))
+		if err := runtime.runProcessAndStreamLogsSilent(workspaceRoot, "pnpm", []string{"install", pkgName + "@latest"}); err != nil {
+			runtime.msgChan <- taskFinishedMsg{Success: false, Err: err}
 			return
 		}
-		m.runtime.msgChan <- logLineMsg(">>> Preparing workspace modules…")
-		err := m.runProcessAndStreamLogsSilent(m.workspaceRoot, "pnpm", []string{"run", "prepare:modules"})
-		m.runtime.msgChan <- taskFinishedMsg{Success: err == nil, Err: err}
+		runtime.msgChan <- logLineMsg(">>> Preparing workspace modules…")
+		err := runtime.runProcessAndStreamLogsSilent(workspaceRoot, "pnpm", []string{"run", "prepare:modules"})
+		runtime.msgChan <- taskFinishedMsg{Success: err == nil, Err: err}
 	}()
 	return m, nil
 }
