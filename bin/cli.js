@@ -68,8 +68,11 @@ CONTROL PANEL (TUI)
   g                       Settings (GitHub user, SSH, trusted orgs)
   r                       Refresh package list from GitHub (detects new modules)
   b                       Run pnpm run generate
+  n                       Create a new app or module (interactive wizard)
   q / Esc                 Quit
   ${name} init [dir]      Create a new OWD project (then opens the control panel)
+  ${name} create                  Create a new app or module (interactive wizard)
+  ${name} create <kind> <name>    Scaffold a new app or module (e.g. desktop create app todo)
   ${name} add <package> [options]
   ${name} add <kind> <name> [options]
   ${name} validate [path...]  Check Nuxt module + playground layout
@@ -136,6 +139,7 @@ async function openControlPanel(name) {
   const cliDir = join(fileURLToPath(import.meta.url), '..')
   const goDir = join(cliDir, '../go')
   const binaryPath = join(goDir, 'desktop-go')
+  const readline = await import('node:readline/promises')
 
   // Compile the Go Control Panel if binary doesn't exist
   if (!existsSync(binaryPath)) {
@@ -145,16 +149,52 @@ async function openControlPanel(name) {
       console.log('Go Control Panel compiled successfully!')
     } catch (err) {
       console.warn('Failed to compile Go Control Panel, falling back to legacy CP:', err.message)
-      const { runCp } = await import('./cp.js')
-      await runCp(name)
+      const child = spawn(process.execPath, [
+        '-e',
+        `import('./cp.js').then(m => m.runCp(${JSON.stringify(name)}))`
+      ], {
+        cwd: cliDir,
+        stdio: 'inherit',
+      })
+      child.on('exit', async (code) => {
+        if (code === 10) {
+          const { runCreateCli } = await import('./lib/create.js')
+          const workspaceRoot = findWorkspaceRoot()
+          try {
+            await runCreateCli({ workspaceRoot })
+          } catch (err) {
+            console.error('\n✗ Error creating package:', err.message)
+            const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
+            await rl.question('\nPress Enter to return to the control panel...')
+            rl.close()
+          }
+          await openControlPanel(name)
+        } else {
+          process.exit(code ?? 0)
+        }
+      })
       return
     }
   }
 
   // Execute Go TUI
   const child = spawn(binaryPath, [], { stdio: 'inherit' })
-  child.on('exit', (code) => {
-    process.exit(code ?? 0)
+  child.on('exit', async (code) => {
+    if (code === 10) {
+      const { runCreateCli } = await import('./lib/create.js')
+      const workspaceRoot = findWorkspaceRoot()
+      try {
+        await runCreateCli({ workspaceRoot })
+      } catch (err) {
+        console.error('\n✗ Error creating package:', err.message)
+        const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
+        await rl.question('\nPress Enter to return to the control panel...')
+        rl.close()
+      }
+      await openControlPanel(name)
+    } else {
+      process.exit(code ?? 0)
+    }
   })
 }
 
@@ -348,6 +388,20 @@ export async function runCli(name, argv, options = {}) {
       dryRun: parsed['dry-run'] === true,
       check: parsed.check === true,
     })
+    return
+  }
+
+  if (cmd === 'create' || cmd === 'new') {
+    if (!workspaceRoot) {
+      fail(
+        'Not inside an OWD workspace.',
+        `Run from inside an OWD workspace directory to scaffold a new package.`,
+      )
+    }
+    const { runCreateCli } = await import('./lib/create.js')
+    const kind = _[1]
+    const name = _[2]
+    await runCreateCli({ kind, name, workspaceRoot })
     return
   }
 

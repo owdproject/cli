@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "include": [
+    "src/runtime",
+    "src/module.ts"
+  ],
+  "exclude": [
+    "dist",
+    "node_modules",
+    "playground"
+  ],
+  "compilerOptions": {
+    "outDir": "dist"
+  }
+}

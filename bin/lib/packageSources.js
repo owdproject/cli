@@ -255,6 +255,16 @@ export function buildSourceOptions(metadata, settings, sshAuth = {}) {
   /** @type {SourceOption[]} */
   const options = []
 
+  if (metadata.local) {
+    options.push({
+      id: 'local',
+      kind: 'local',
+      label: `Use Existing Local Folder — ${metadata.shortName}`,
+      url: '',
+      choice: { type: 'local' },
+    })
+  }
+
   const official = metadata.github.official
   if (official?.owner) {
     options.push({

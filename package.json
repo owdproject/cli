@@ -29,7 +29,8 @@
   },
   "files": [
     "bin",
-    "go"
+    "go",
+    "templates"
   ],
   "dependencies": {
     "neo-blessed": "^0.2.0",

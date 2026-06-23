@@ -20,7 +20,7 @@ import {
 } from './npmVersions.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
-const BLUEPRINT_ROOT = resolve(__dirname, '../../template-blueprint')
+const BLUEPRINT_ROOT = resolve(__dirname, '../../../core/template-blueprint')
 
 export const STARTER_DESKTOP_DEPS = [
   '@owdproject/core',
@@ -97,6 +97,32 @@ function copyTree(src, dest, skipNames = new Set()) {
   for (const name of readdirSync(src)) {
     if (skipNames.has(name)) continue
     copyTree(join(src, name), join(dest, name), skipNames)
+  }
+}
+
+/**
+ * @param {string} workspaceRoot
+ */
+function syncCliTemplates(workspaceRoot) {
+  const cliTemplatesDir = join(workspaceRoot, 'packages/cli/templates')
+
+  if (existsSync(cliTemplatesDir)) {
+    rmSync(cliTemplatesDir, { recursive: true, force: true })
+  }
+  mkdirSync(cliTemplatesDir, { recursive: true })
+
+  const appTemplateSrc = join(workspaceRoot, 'apps/app-template')
+  const appTemplateDest = join(cliTemplatesDir, 'app')
+  if (existsSync(appTemplateSrc)) {
+    console.log('Syncing apps/app-template to packages/cli/templates/app...')
+    copyTree(appTemplateSrc, appTemplateDest, new Set(['node_modules', '.nuxt', 'dist', '.output', '.git']))
+  }
+
+  const moduleTemplateSrc = join(workspaceRoot, 'packages/module-template')
+  const moduleTemplateDest = join(cliTemplatesDir, 'module')
+  if (existsSync(moduleTemplateSrc)) {
+    console.log('Syncing packages/module-template to packages/cli/templates/module...')
+    copyTree(moduleTemplateSrc, moduleTemplateDest, new Set(['node_modules', '.nuxt', 'dist', '.output', '.git']))
   }
 }
 
@@ -366,6 +392,10 @@ export async function generateTemplate(workspaceRoot, options = {}) {
     }
 
     writeGeneratedFiles(workspaceRoot, outputRoot, { versions })
+
+    if (!check) {
+      syncCliTemplates(workspaceRoot)
+    }
 
     if (check) {
       const diffs = diffTemplateTrees(templateOut, outputRoot)

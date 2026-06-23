@@ -205,6 +205,7 @@ type TuiModel struct {
 	ctx           *bridge.WorkspaceContext
 	catalog       *bridge.CatalogResponse
 
+	ExitCode     int
 	activeTab    int // 0: Internal, 1: Apps, 2: Modules, 3: Themes
 	err          error
 	loading      bool
@@ -525,10 +526,22 @@ func (m *TuiModel) processNextQueueDecision() tea.Cmd {
 	m.activePrompt = PromptInstallMethod
 	methods := m.getInstallMethods(&dec.Entry)
 	selIdx := 0
-	for idx, mth := range methods {
-		if mth.Name == m.lastInstallMethod {
-			selIdx = idx
-			break
+	isLocal := false
+	if dec.Entry.LocalSource {
+		for idx, mth := range methods {
+			if mth.Name == "local" {
+				selIdx = idx
+				isLocal = true
+				break
+			}
+		}
+	}
+	if !isLocal {
+		for idx, mth := range methods {
+			if mth.Name == m.lastInstallMethod {
+				selIdx = idx
+				break
+			}
 		}
 	}
 	m.promptSel = selIdx
@@ -859,6 +872,9 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.settingsSel = 0
 				m.activePrompt = PromptSettings
 			}
+		case "n":
+			m.ExitCode = 10
+			return m, tea.Quit
 		}
 		return m, nil
 
@@ -2560,6 +2576,7 @@ func (m TuiModel) renderStatusBar(w int) string {
 	shortcutParts = append(shortcutParts,
 		serverShortcut,
 		barKeyStyle.Render("r") + barStyle.Render(" refresh"),
+		barKeyStyle.Render("n") + barStyle.Render(" new"),
 		barKeyStyle.Render("q") + barStyle.Render(" quit"),
 	)
 	line2 := barStyle.Width(w).Render(strings.Join(shortcutParts, sep))
@@ -2590,7 +2607,7 @@ func (m TuiModel) getInstallMethods(pkg *bridge.CatalogEntry) []InstallMethod {
 		methods = append(methods, InstallMethod{
 			Name:  "npm",
 			Label: "NPM Registry",
-			Desc:  "Install from npm (default)",
+			Desc:  "Install from npm (not recommended)",
 		})
 	}
 

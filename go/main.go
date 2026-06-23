@@ -23,8 +23,13 @@ func main() {
 	p = tea.NewProgram(model, tea.WithAltScreen())
 	tui.Program = p
 
-	if _, err := p.Run(); err != nil {
+	finalModel, err := p.Run()
+	if err != nil {
 		fmt.Printf("Alas, there's been an error: %v", err)
 		os.Exit(1)
+	}
+
+	if m, ok := finalModel.(tui.TuiModel); ok && m.ExitCode != 0 {
+		os.Exit(m.ExitCode)
 	}
 }

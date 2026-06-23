@@ -489,6 +489,7 @@ export async function runCp(commandName = 'desktop') {
     { id: 'docs', label: 'Open documentation', key: 'i' },
     { id: 'settings', label: 'Settings', key: 'g' },
     { id: 'build', label: 'Build (pnpm generate)', key: 'b' },
+    { id: 'create', label: 'Create new app or module', key: 'n' },
     { id: 'quit', label: 'Quit control panel', key: 'q' },
   ]
 
@@ -1389,7 +1390,7 @@ export async function runCp(commandName = 'desktop') {
       [
         msgLine,
         `  Legend: {${C.add}-fg}[+]{/} add  {${C.remove}-fg}[-]{/} remove  {${C.accent}-fg}[*]{/} on desktop  |  {${C.npm}-fg}NPM{/} registry  {${C.git}-fg}GIT{/} repo  {${C.local}-fg}LOC{/} workspace  |  {${C.warn}-fg}WRN{/} untrusted`,
-        `  Shortcuts: ↑↓ Space toggle  ${keyHint('1')}${keyHint('2')}${keyHint('3')} tabs  ${saveShortcut}  ${keyHint('d')} server  ${keyHint('O')} sort  ${keyHint('m')} menu  ${keyHint('u')} updates  ${keyHint('r')} refresh  ${keyHint('q')} quit`,
+        `  Shortcuts: ↑↓ Space toggle  ${keyHint('1')}${keyHint('2')}${keyHint('3')} tabs  ${saveShortcut}  ${keyHint('d')} server  ${keyHint('O')} sort  ${keyHint('m')} menu  ${keyHint('u')} updates  ${keyHint('r')} refresh  ${keyHint('n')} new  ${keyHint('q')} quit`,
       ].join('\n'),
     )
   }
@@ -2036,6 +2037,9 @@ export async function runCp(commandName = 'desktop') {
         } finally {
           refreshTerminalUi()
         }
+        break
+      case 'create':
+        process.exit(10)
         break
       case 'quit':
         process.exit(0)
@@ -2724,30 +2728,35 @@ export async function runCp(commandName = 'desktop') {
       installWizardList.setItems(
         installWizardOptions.map((opt) => {
           const prefix =
-            opt.kind === 'npm' ? `{${C.npm}-fg}NPM{/}` : `{${C.git}-fg}GIT{/}`
+            opt.kind === 'npm' ? `{${C.npm}-fg}NPM{/}` : opt.kind === 'local' ? `{${C.local}-fg}LOC{/}` : `{${C.git}-fg}GIT{/}`
           return `${prefix}  ${opt.label}`
         }),
       )
       let defaultIdx = 0
-      const lastId = settings.lastInstallChoiceId
-      if (lastId) {
-        let found = installWizardOptions.findIndex((opt) => opt.id === lastId)
-        if (found >= 0) {
-          defaultIdx = found
-        } else {
-          const isSsh = lastId.includes('ssh')
-          const isHttps = lastId.includes('https')
-          const isNpm = lastId === 'npm'
-          if (isNpm) {
-            found = installWizardOptions.findIndex((opt) => opt.id === 'npm')
-            if (found >= 0) defaultIdx = found
+      const isLocalAvailable = installWizardOptions.some((opt) => opt.id === 'local')
+      if (isLocalAvailable) {
+        defaultIdx = installWizardOptions.findIndex((opt) => opt.id === 'local')
+      } else {
+        const lastId = settings.lastInstallChoiceId
+        if (lastId) {
+          let found = installWizardOptions.findIndex((opt) => opt.id === lastId)
+          if (found >= 0) {
+            defaultIdx = found
           } else {
-            found = installWizardOptions.findIndex((opt) => {
-              if (isSsh && opt.protocol === 'ssh') return true
-              if (isHttps && opt.protocol === 'https') return true
-              return false
-            })
-            if (found >= 0) defaultIdx = found
+            const isSsh = lastId.includes('ssh')
+            const isHttps = lastId.includes('https')
+            const isNpm = lastId === 'npm'
+            if (isNpm) {
+              found = installWizardOptions.findIndex((opt) => opt.id === 'npm')
+              if (found >= 0) defaultIdx = found
+            } else {
+              found = installWizardOptions.findIndex((opt) => {
+                if (isSsh && opt.protocol === 'ssh') return true
+                if (isHttps && opt.protocol === 'https') return true
+                return false
+              })
+              if (found >= 0) defaultIdx = found
+            }
           }
         }
       }
@@ -3216,6 +3225,10 @@ export async function runCp(commandName = 'desktop') {
     if (settingsOpen || installWizardOpen || sortPickerOpen) return
     if (menuOpen) closeMenu()
     else openMenu()
+  })
+  screen.key(['n', 'N'], () => {
+    if (settingsOpen || installWizardOpen || sortPickerOpen || menuOpen || confirmDialogOpen) return
+    process.exit(10)
   })
   screen.key(['d', 'D'], () => {
     if (!overlayBlocksKeys()) {
