@@ -312,6 +312,7 @@ export async function loadCatalog(workspaceRoot, settings, options = {}) {
         byName.set(item.shortName, {
           ...prev,
           ...item,
+          stars: prev.stars ?? 0, // preserve GitHub stars — scanLocal always sets 0
           localPath: item.localPath,
           remote: item.remote ?? prev.remote,
           updatedAt: item.updatedAt ?? prev.updatedAt,
