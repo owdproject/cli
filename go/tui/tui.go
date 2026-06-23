@@ -190,6 +190,7 @@ const (
 	PromptThemeDepConfirm
 	PromptThemeDepMethod
 	PromptSetupProgress
+	PromptWipeWorkspaceConfirm
 )
 
 var Program *tea.Program
@@ -795,7 +796,7 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		promptToShow := m.activePrompt
-		if m.taskActive && (promptToShow == PromptNone || promptToShow == PromptUninstallConfirm || promptToShow == PromptInstallMethod) {
+		if m.taskActive && (promptToShow == PromptNone || promptToShow == PromptUninstallConfirm || promptToShow == PromptInstallMethod || promptToShow == PromptWipeWorkspaceConfirm) {
 			promptToShow = PromptSetupProgress
 		}
 		if promptToShow != PromptNone {
@@ -846,9 +847,19 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.hasPendingChanges() {
 				cmd := m.startQueueReview()
 				return m, cmd
+			} else {
+				cmd := m.startStartupCheck()
+				if cmd != nil {
+					return m, cmd
+				}
 			}
 		case "d":
 			if !m.serverRunning && !m.taskActive {
+				cmd := m.startStartupCheck()
+				if cmd != nil {
+					return m, cmd
+				}
+
 				m.statusMsg = "Starting dev server…"
 				m.taskActive = true
 				if Program != nil {
@@ -958,14 +969,6 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.rebootServerCmd()
 			}
 
-			if !m.startupCheckDone && m.catalog != nil {
-				m.startupCheckDone = true
-				cmd := m.startStartupCheck()
-				if cmd != nil {
-					return m, tea.Batch(cmd, m.checkServerStatusCmd())
-				}
-			}
-
 			return m, m.checkServerStatusCmd()
 		}
 
@@ -977,15 +980,6 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.catalog = msg.Cat
 			m.statusMsg = fmt.Sprintf("Catalog loaded (%s).", msg.Cat.CacheAge)
-
-			if !m.startupCheckDone && m.ctx != nil {
-				m.startupCheckDone = true
-				cmd := m.startStartupCheck()
-				if cmd != nil {
-					m.checkingUpdates = true
-					return m, tea.Batch(cmd, m.checkForUpdatesCmd())
-				}
-			}
 
 			m.checkingUpdates = true
 			return m, m.checkForUpdatesCmd()
@@ -1089,7 +1083,7 @@ func (m *TuiModel) addLog(line string) {
 
 func (m TuiModel) handlePromptKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	promptToShow := m.activePrompt
-	if m.taskActive && (promptToShow == PromptNone || promptToShow == PromptUninstallConfirm || promptToShow == PromptInstallMethod) {
+	if m.taskActive && (promptToShow == PromptNone || promptToShow == PromptUninstallConfirm || promptToShow == PromptInstallMethod || promptToShow == PromptWipeWorkspaceConfirm) {
 		promptToShow = PromptSetupProgress
 	}
 	if promptToShow == PromptSetupProgress {
@@ -1104,6 +1098,10 @@ func (m TuiModel) handlePromptKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.activePrompt == PromptThemeDepConfirm || m.activePrompt == PromptThemeDepMethod {
 			m.themeDepResolveChan <- themeDepDecision{install: false}
 		}
+		if m.activePrompt == PromptWipeWorkspaceConfirm {
+			m.activePrompt = PromptSettings
+			return m, nil
+		}
 		m.activePrompt = PromptNone
 		m.promptPkg = nil
 		m.promptQueue = nil
@@ -1116,8 +1114,8 @@ func (m TuiModel) handlePromptKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.promptSel--
 			}
 		} else if m.activePrompt == PromptSettings {
-			if m.settingsSel == 4 || m.settingsSel == 5 {
-				m.settingsSel = 3
+			if m.settingsSel == 5 || m.settingsSel == 6 {
+				m.settingsSel = 4
 			} else if m.settingsSel > 0 {
 				m.settingsSel--
 			}
@@ -1130,14 +1128,14 @@ func (m TuiModel) handlePromptKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.promptSel++
 			}
 		} else if m.activePrompt == PromptSettings {
-			if m.settingsSel == 3 {
-				m.settingsSel = 4
-			} else if m.settingsSel < 3 {
+			if m.settingsSel == 4 {
+				m.settingsSel = 5
+			} else if m.settingsSel < 4 {
 				m.settingsSel++
 			}
 		} else {
 			limit := 2
-			if m.activePrompt == PromptUninstallConfirm || m.activePrompt == PromptForceReinstallConfirm || m.activePrompt == PromptThemeDepConfirm {
+			if m.activePrompt == PromptUninstallConfirm || m.activePrompt == PromptForceReinstallConfirm || m.activePrompt == PromptThemeDepConfirm || m.activePrompt == PromptWipeWorkspaceConfirm {
 				limit = 1
 			} else if (m.activePrompt == PromptInstallMethod || m.activePrompt == PromptThemeDepMethod) && m.promptPkg != nil {
 				limit = len(m.getInstallMethods(m.promptPkg)) - 1
@@ -1148,8 +1146,8 @@ func (m TuiModel) handlePromptKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "left", "h":
 		if m.activePrompt == PromptSettings {
-			if m.settingsSel == 5 {
-				m.settingsSel = 4
+			if m.settingsSel == 6 {
+				m.settingsSel = 5
 			}
 		} else if m.activePrompt != PromptManagePackage && m.activePrompt != PromptInstallMethod && m.activePrompt != PromptThemeDepMethod {
 			if m.promptSel > 0 {
@@ -1158,12 +1156,12 @@ func (m TuiModel) handlePromptKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "right", "l":
 		if m.activePrompt == PromptSettings {
-			if m.settingsSel == 4 {
-				m.settingsSel = 5
+			if m.settingsSel == 5 {
+				m.settingsSel = 6
 			}
 		} else if m.activePrompt != PromptManagePackage && m.activePrompt != PromptInstallMethod && m.activePrompt != PromptThemeDepMethod {
 			limit := 2
-			if m.activePrompt == PromptUninstallConfirm || m.activePrompt == PromptForceReinstallConfirm || m.activePrompt == PromptThemeDepConfirm {
+			if m.activePrompt == PromptUninstallConfirm || m.activePrompt == PromptForceReinstallConfirm || m.activePrompt == PromptThemeDepConfirm || m.activePrompt == PromptWipeWorkspaceConfirm {
 				limit = 1
 			}
 			if m.promptSel < limit {
@@ -1173,6 +1171,19 @@ func (m TuiModel) handlePromptKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "enter":
 		pkg := m.promptPkg
 		prompt := m.activePrompt
+
+		if prompt == PromptWipeWorkspaceConfirm {
+			if m.promptSel == 0 { // Yes
+				m.activePrompt = PromptNone
+				m.taskActive = true
+				m.statusMsg = "Resetting workspace…"
+				m.addLog(">>> Initiating workspace reset task…")
+				return m, m.runWipeWorkspaceCmd()
+			} else { // No
+				m.activePrompt = PromptSettings
+				return m, nil
+			}
+		}
 
 		if prompt == PromptThemeDepConfirm {
 			if m.promptSel == 0 { // Yes
@@ -1304,7 +1315,11 @@ func (m TuiModel) handlePromptKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.addLog(">>> To configure GitHub User, modify .desktop/settings.json or use OWD_GITHUB_USER env var.")
 				m.activePrompt = PromptSettings
 				return m, nil
-			case 4: // Save
+			case 4: // Reset Workspace
+				m.activePrompt = PromptWipeWorkspaceConfirm
+				m.promptSel = 1 // default to No
+				return m, nil
+			case 5: // Save
 				m.activePrompt = PromptNone
 				if m.ctx != nil {
 					settings := m.ctx.Settings
@@ -1325,7 +1340,7 @@ func (m TuiModel) handlePromptKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				}
 				m.loading = true
 				return m, tea.Batch(m.loadContextCmd(), m.loadCatalogCmd(false))
-			case 5: // Cancel
+			case 6: // Cancel
 				m.activePrompt = PromptNone
 				return m, nil
 			}
@@ -2004,7 +2019,7 @@ func (m TuiModel) View() string {
 		catalogContent := m.renderCatalogPanel(catW-4, catalogH-2, showLogs)
 		catalogPanel = drawPanel(catW-1, catalogH, "Catalog", catalogContent, true)
 		promptToShow := m.activePrompt
-		if m.taskActive && (promptToShow == PromptNone || promptToShow == PromptUninstallConfirm || promptToShow == PromptInstallMethod) {
+		if m.taskActive && (promptToShow == PromptNone || promptToShow == PromptUninstallConfirm || promptToShow == PromptInstallMethod || promptToShow == PromptWipeWorkspaceConfirm) {
 			promptToShow = PromptSetupProgress
 		}
 		if promptToShow != PromptNone {
@@ -2036,7 +2051,7 @@ func (m TuiModel) View() string {
 		catalogContent := m.renderCatalogPanel(w-4, catalogH-2, showLogs)
 		catalogPanel = drawPanel(w, catalogH, "Catalog", catalogContent, true)
 		promptToShow := m.activePrompt
-		if m.taskActive && (promptToShow == PromptNone || promptToShow == PromptUninstallConfirm || promptToShow == PromptInstallMethod) {
+		if m.taskActive && (promptToShow == PromptNone || promptToShow == PromptUninstallConfirm || promptToShow == PromptInstallMethod || promptToShow == PromptWipeWorkspaceConfirm) {
 			promptToShow = PromptSetupProgress
 		}
 		if promptToShow != PromptNone {
@@ -2877,7 +2892,11 @@ func (m TuiModel) renderModal(prompt PromptType) string {
 		frame := spinnerFrames[m.tickCount%len(spinnerFrames)]
 		spin := lipgloss.NewStyle().Foreground(colorCyan).Bold(true).Render(frame)
 
-		content.WriteString(boldStyle.Render("Installing packages…") + "\n\n")
+		title := "Installing packages…"
+		if strings.Contains(strings.ToLower(m.setupLabel), "clean") || strings.Contains(strings.ToLower(m.setupLabel), "reset") || strings.Contains(strings.ToLower(m.setupLabel), "wipe") {
+			title = "Resetting workspace…"
+		}
+		content.WriteString(boldStyle.Render(title) + "\n\n")
 		content.WriteString("  " + spin + " " + boldStyle.Render(m.setupLabel) + "\n\n")
 
 		bar := renderProgressBar(m.setupStep, m.setupTotalSteps, 40)
@@ -3074,17 +3093,28 @@ func (m TuiModel) renderModal(prompt PromptType) string {
 		} else {
 			content.WriteString("  " + boldStyle.Render(ghLabel) + "\n   " + ghVal + "\n")
 		}
+		content.WriteString("\n")
+
+		// 5. Reset Workspace
+		resetLabel := "5. Reset Workspace"
+		resetVal := modalOptionInactive.Render(" [ WIPE EVERYTHING ] ")
+		if m.settingsSel == 4 {
+			resetVal = lipgloss.NewStyle().Background(colorErr).Foreground(lipgloss.Color("#000000")).Bold(true).Padding(0, 2).Render(" [ WIPE EVERYTHING ] ")
+			content.WriteString(accentStyle.Render("▶ ") + boldStyle.Render(resetLabel) + "\n   " + resetVal + "\n")
+		} else {
+			content.WriteString("  " + boldStyle.Render(resetLabel) + "\n   " + resetVal + "\n")
+		}
 		content.WriteString("\n\n")
 
 		// Buttons Row: Save and Cancel
 		var saveBtn, cancelBtn string
-		if m.settingsSel == 4 {
+		if m.settingsSel == 5 {
 			saveBtn = lipgloss.NewStyle().Background(colorAccent).Foreground(lipgloss.Color("#000000")).Bold(true).Padding(0, 3).Render(" SAVE ")
 		} else {
 			saveBtn = lipgloss.NewStyle().Background(colorDim).Foreground(colorWhite).Padding(0, 3).Render(" SAVE ")
 		}
 
-		if m.settingsSel == 5 {
+		if m.settingsSel == 6 {
 			cancelBtn = lipgloss.NewStyle().Background(colorErr).Foreground(lipgloss.Color("#000000")).Bold(true).Padding(0, 3).Render(" CANCEL ")
 		} else {
 			cancelBtn = lipgloss.NewStyle().Background(colorDim).Foreground(colorWhite).Padding(0, 3).Render(" CANCEL ")
@@ -3093,6 +3123,24 @@ func (m TuiModel) renderModal(prompt PromptType) string {
 		content.WriteString("      " + saveBtn + "    " + cancelBtn + "\n\n")
 		content.WriteString(subtleStyle.Render("↑↓ select item  ←→ toggle/buttons  Enter confirm  Esc exit"))
 		return modalStyle.Width(72).Render(content.String())
+	} else if prompt == PromptWipeWorkspaceConfirm {
+		content.WriteString(boldStyle.Render("Wipe & Reset Workspace?") + "\n")
+		content.WriteString(errStyle.Render("⚠ CAUTION: This will delete ALL non-core applications, modules, and themes!") + "\n")
+		content.WriteString(subtleStyle.Render("Your configuration files (desktop.config.ts) and desktop package.json will be reset.") + "\n\n")
+		opts := []string{"Yes, wipe everything", "No, cancel"}
+		for i, opt := range opts {
+			if i == m.promptSel {
+				bg := colorErr
+				if i == 1 {
+					bg = colorAccent
+				}
+				content.WriteString(lipgloss.NewStyle().Background(bg).Foreground(lipgloss.Color("#000000")).Bold(true).Padding(0, 2).Render(" " + opt + " "))
+			} else {
+				content.WriteString(modalOptionInactive.Render(" " + opt + " "))
+			}
+			content.WriteString("  ")
+		}
+		content.WriteString("\n\n" + subtleStyle.Render("← → select  Enter confirm  Esc cancel"))
 	}
 
 	return modalStyle.Render(content.String())
@@ -3880,3 +3928,147 @@ func (m *TuiModel) loadPackageDetails(pkg *bridge.CatalogEntry) {
 
 // keep rand used (for future sparkline noise simulation)
 var _ = rand.Float64
+
+func (m *TuiModel) RunWipeWorkspaceTask(p *tea.Program) {
+	go func() {
+		p.Send(clearLogsMsg{})
+		p.Send(logLineMsg(">>> Starting workspace reset task…"))
+
+		totalSteps := 7
+		step := 0
+
+		// Step 1: Clean apps/
+		step++
+		p.Send(setupProgressMsg{Step: step, Total: totalSteps, Label: "Cleaning apps directory…"})
+		p.Send(logLineMsg(">>> Cleaning apps/ directory…"))
+		if err := wipeDirectory(filepath.Join(m.workspaceRoot, "apps"), nil); err != nil {
+			p.Send(logLineMsg(fmt.Sprintf(">>> Error cleaning apps: %v", err)))
+			p.Send(taskFinishedMsg{Success: false, Err: err})
+			return
+		}
+
+		// Step 2: Clean themes/
+		step++
+		p.Send(setupProgressMsg{Step: step, Total: totalSteps, Label: "Cleaning themes directory…"})
+		p.Send(logLineMsg(">>> Cleaning themes/ directory…"))
+		if err := wipeDirectory(filepath.Join(m.workspaceRoot, "themes"), nil); err != nil {
+			p.Send(logLineMsg(fmt.Sprintf(">>> Error cleaning themes: %v", err)))
+			p.Send(taskFinishedMsg{Success: false, Err: err})
+			return
+		}
+
+		// Step 3: Clean packages/ (preserving core, cli, nx)
+		step++
+		p.Send(setupProgressMsg{Step: step, Total: totalSteps, Label: "Cleaning packages directory…"})
+		p.Send(logLineMsg(">>> Cleaning packages/ directory (preserving core, cli, nx)…"))
+		preservePkgs := map[string]bool{"core": true, "cli": true, "nx": true}
+		if err := wipeDirectory(filepath.Join(m.workspaceRoot, "packages"), preservePkgs); err != nil {
+			p.Send(logLineMsg(fmt.Sprintf(">>> Error cleaning packages: %v", err)))
+			p.Send(taskFinishedMsg{Success: false, Err: err})
+			return
+		}
+
+		// Step 4: Reset desktop.config.ts
+		step++
+		p.Send(setupProgressMsg{Step: step, Total: totalSteps, Label: "Resetting desktop config…"})
+		p.Send(logLineMsg(">>> Resetting desktop/desktop.config.ts to default…"))
+		defaultConfig := `import { defineDesktopConfig } from '@owdproject/core'
+
+export default defineDesktopConfig({
+  theme: '',
+  apps: [],
+  modules: [],
+})
+`
+		configPath := filepath.Join(m.workspaceRoot, "desktop", "desktop.config.ts")
+		if err := os.WriteFile(configPath, []byte(defaultConfig), 0644); err != nil {
+			p.Send(logLineMsg(fmt.Sprintf(">>> Error resetting desktop config: %v", err)))
+			p.Send(taskFinishedMsg{Success: false, Err: err})
+			return
+		}
+
+		// Step 5: Reset package.json
+		step++
+		p.Send(setupProgressMsg{Step: step, Total: totalSteps, Label: "Resetting package dependencies…"})
+		p.Send(logLineMsg(">>> Resetting desktop/package.json dependencies to core only…"))
+		defaultPackageJson := `{
+  "name": "@owdproject/client",
+  "private": true,
+  "nx": {
+    "name": "desktop"
+  },
+  "scripts": {
+    "build": "nuxt generate",
+    "dev": "nuxt dev --host",
+    "generate": "nuxt generate --dev",
+    "postinstall": "nuxt prepare",
+    "preview": "nuxt preview",
+    "desktop": "desktop"
+  },
+  "dependencies": {
+    "@owdproject/core": "workspace:*"
+  }
+}
+`
+		pkgJsonPath := filepath.Join(m.workspaceRoot, "desktop", "package.json")
+		if err := os.WriteFile(pkgJsonPath, []byte(defaultPackageJson), 0644); err != nil {
+			p.Send(logLineMsg(fmt.Sprintf(">>> Error resetting package.json: %v", err)))
+			p.Send(taskFinishedMsg{Success: false, Err: err})
+			return
+		}
+
+		// Step 6: Run pnpm install
+		step++
+		p.Send(setupProgressMsg{Step: step, Total: totalSteps, Label: "Installing dependencies (pnpm install)…"})
+		p.Send(logLineMsg(">>> Running pnpm install (syncing workspace)…"))
+		if err := runProcessAndStreamLogsSilent(m.workspaceRoot, "pnpm", []string{"install"}, p); err != nil {
+			p.Send(logLineMsg(fmt.Sprintf(">>> Error running pnpm install: %v", err)))
+			p.Send(taskFinishedMsg{Success: false, Err: err})
+			return
+		}
+
+		// Step 7: Run prepare:modules
+		step++
+		p.Send(setupProgressMsg{Step: step, Total: totalSteps, Label: "Rebuilding stubs (prepare:modules)…"})
+		p.Send(logLineMsg(">>> Rebuilding stubs…"))
+		if err := runProcessAndStreamLogsSilent(m.workspaceRoot, "pnpm", []string{"run", "prepare:modules"}, p); err != nil {
+			p.Send(logLineMsg(fmt.Sprintf(">>> Error running prepare:modules: %v", err)))
+			p.Send(taskFinishedMsg{Success: false, Err: err})
+			return
+		}
+
+		p.Send(taskFinishedMsg{Success: true})
+	}()
+}
+
+func (m *TuiModel) runWipeWorkspaceCmd() tea.Cmd {
+	return func() tea.Msg {
+		if Program != nil {
+			m.RunWipeWorkspaceTask(Program)
+		}
+		return nil
+	}
+}
+
+func wipeDirectory(dir string, preserve map[string]bool) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			name := entry.Name()
+			if preserve != nil && preserve[name] {
+				continue
+			}
+			err := os.RemoveAll(filepath.Join(dir, name))
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
