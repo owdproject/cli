@@ -302,16 +302,18 @@ func (m *TuiModel) renderCatalogPanel(w, h int, _ bool) string {
 
 	// Table header
 	headerStyle := tableHeaderStyle
-	colNameW := w * 32 / 100
+	colNameW := w * 28 / 100
 	if colNameW < 12 {
 		colNameW = 12
 	}
 	header := "   " +
 		padRight("NAME", colNameW) + " " +
-		padRight("VERSION", 11) + " " +
-		padRight("SOURCE", 10) + " " +
-		padRight("STATUS", 10) + " " +
-		padRight("DESCRIPTION", w-colNameW-38)
+		padRight("VERSION", 9) + " " +
+		padRight("SRC", 5) + " " +
+		padRight("SYNC", 14) + " " +
+		padRight("PUBLISHER", 12) + " " +
+		padRight("★", 6) + " " +
+		"AGE"
 	lines = append(lines, headerStyle.Render(header))
 	lines = append(lines, headerStyle.Render("  "+strings.Repeat("─", w-4)))
 
@@ -339,9 +341,9 @@ func (m *TuiModel) renderCatalogPanel(w, h int, _ bool) string {
 }
 
 func (m *TuiModel) renderCatalogRow(item bridge.CatalogEntry, selected bool, w, nameW int) string {
+	// ── Badge (checkbox / radiobox) ─────────────────────────────
 	var badge string
 	if item.Kind == "theme" {
-		// Radiobox
 		active := false
 		if m.ctx != nil && m.ctx.Config.Theme != nil && *m.ctx.Config.Theme == item.Name {
 			active = true
@@ -349,19 +351,16 @@ func (m *TuiModel) renderCatalogRow(item bridge.CatalogEntry, selected bool, w, 
 		if m.pendingTheme != nil && *m.pendingTheme == item.Name {
 			active = true
 		}
-
 		if active {
 			badge = accentStyle.Render("◉")
 		} else {
 			badge = subtleStyle.Render("○")
 		}
 	} else {
-		// Checkbox
 		active := item.Installed
 		if val, exists := m.pendingPackages[item.Name]; exists {
 			active = val
 		}
-
 		if active {
 			badge = accentStyle.Render("☒")
 		} else {
@@ -372,11 +371,13 @@ func (m *TuiModel) renderCatalogRow(item bridge.CatalogEntry, selected bool, w, 
 	shortName := item.ShortName
 	name := badge + "  " + shortName
 
+	// ── VERSION ─────────────────────────────────────────────────
 	version := "—"
 	if item.Version != nil {
 		version = *item.Version
 	}
 
+	// ── SRC (npm / git / dev) ────────────────────────────────────
 	source := "npm"
 	if item.LocalSource {
 		if m.localGitDirs[item.ShortName] {
@@ -386,45 +387,53 @@ func (m *TuiModel) renderCatalogRow(item bridge.CatalogEntry, selected bool, w, 
 		}
 	}
 
-	var status string
-	pendingVal, hasPending := m.pendingPackages[item.Name]
-	pendingThemeVal := m.pendingTheme
-
-	if item.Installed {
-		if hasPending && !pendingVal {
-			status = warnStyle.Render("remove*")
-		} else {
-			status = accentStyle.Render("installed")
+	// ── SYNC column: git changes + update indicators ─────────────
+	var syncParts []string
+	if gitStat, ok := m.gitChangesMap[item.ShortName]; ok {
+		if gitStat.Added > 0 {
+			syncParts = append(syncParts, accentStyle.Render(fmt.Sprintf("+%d", gitStat.Added)))
 		}
-	} else {
-		if hasPending && pendingVal {
-			status = cyanStyle.Render("install*")
-		} else if item.Kind == "theme" && pendingThemeVal != nil && *pendingThemeVal == item.Name {
-			status = cyanStyle.Render("active*")
-		} else {
-			status = subtleStyle.Render("—")
+		if gitStat.Modified > 0 {
+			syncParts = append(syncParts, warnStyle.Render(fmt.Sprintf("~%d", gitStat.Modified)))
+		}
+		if gitStat.Deleted > 0 {
+			syncParts = append(syncParts, errStyle.Render(fmt.Sprintf("-%d", gitStat.Deleted)))
 		}
 	}
-
-	// Git behind indicator
 	if upInfo, ok := m.updatesMap[item.ShortName]; ok {
 		if upInfo.LocalGit && upInfo.BehindCount > 0 {
-			status += warnStyle.Render(fmt.Sprintf(" (-%d)", upInfo.BehindCount))
+			syncParts = append(syncParts, cyanStyle.Render(fmt.Sprintf("↓%d", upInfo.BehindCount)))
 		} else if upInfo.Npm {
-			status += warnStyle.Render(" (upd)")
+			syncParts = append(syncParts, accentStyle.Render("↑"))
 		}
 	}
-
-	// Local edits indicator (Git dirty status)
-	if gitStat, ok := m.gitChangesMap[item.ShortName]; ok {
-		total := gitStat.Added + gitStat.Modified + gitStat.Deleted
-		if total > 0 {
-			status += dirtyIndicatorStyle.Render("*")
-		}
+	sync := subtleStyle.Render("—")
+	if len(syncParts) > 0 {
+		sync = strings.Join(syncParts, " ")
 	}
 
-	desc := item.Description
+	// ── PUBLISHER ────────────────────────────────────────────────
+	pub := item.Org
+	if pub == "" || pub == "workspace" {
+		pub = "owdproject"
+	}
+	publisher := truncate(pub, 12)
 
+	// ── STARS ────────────────────────────────────────────────────
+	stars := subtleStyle.Render("—")
+	if item.Stars > 0 {
+		stars = warnStyle.Render(fmt.Sprintf("★ %d", item.Stars))
+	}
+
+	// ── AGE (last push) ──────────────────────────────────────────
+	age := subtleStyle.Render("—")
+	if item.PushedAt != nil {
+		age = mutedStyle.Render(formatCatalogAge(item.PushedAt))
+	} else if item.UpdatedAt != nil {
+		age = mutedStyle.Render(formatCatalogAge(item.UpdatedAt))
+	}
+
+	// ── Assemble row ─────────────────────────────────────────────
 	var nameCol string
 	if selected {
 		nameCol = selectedRowStyle.Render(padRight(name, nameW))
@@ -433,10 +442,12 @@ func (m *TuiModel) renderCatalogRow(item bridge.CatalogEntry, selected bool, w, 
 	}
 
 	row := " " + nameCol + " " +
-		padRight(version, 11) + " " +
-		padRight(source, 10) + " " +
-		padRight(status, 18) + " " +
-		padRight(desc, w-nameW-46)
+		padRight(version, 9) + " " +
+		padRight(source, 5) + " " +
+		padRight(sync, 14) + " " +
+		padRight(publisher, 12) + " " +
+		padRight(stars, 6) + " " +
+		age
 
 	if selected {
 		return selectedRowBgStyle.Render(row)
