@@ -471,11 +471,22 @@ func (m *TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *TuiModel) addLog(line string) {
-	m.logLines = append(m.logLines, line)
+	// Split on embedded newlines — Nuxt can emit multi-line chunks as a single string.
+	// If we store them unsplit, the panel renders 1 counted line but N terminal lines → layout breaks.
+	line = strings.ReplaceAll(line, "\r\n", "\n")
+	sublines := strings.Split(line, "\n")
+	for _, sl := range sublines {
+		sl = strings.TrimRight(sl, "\r")
+		if sl == "" {
+			continue
+		}
+		m.logLines = append(m.logLines, sl)
+	}
 	if len(m.logLines) > 200 {
-		m.logLines = m.logLines[1:]
+		m.logLines = m.logLines[len(m.logLines)-200:]
 	}
 }
+
 
 func (m *TuiModel) checkForUpdatesCmd() tea.Cmd {
 	return func() tea.Msg {

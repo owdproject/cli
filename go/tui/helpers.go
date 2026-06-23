@@ -437,17 +437,19 @@ func truncate(s string, max int) string {
 }
 
 func padRight(s string, width int) string {
-	if len(s) >= width {
-		return s[:width]
+	vis := lipgloss.Width(s)
+	if vis >= width {
+		return truncate(s, width)
 	}
-	return s + strings.Repeat(" ", width-len(s))
+	return s + strings.Repeat(" ", width-vis)
 }
 
 func padLeft(s string, width int) string {
-	if len(s) >= width {
-		return s[:width]
+	vis := lipgloss.Width(s)
+	if vis >= width {
+		return truncate(s, width)
 	}
-	return strings.Repeat(" ", width-len(s)) + s
+	return strings.Repeat(" ", width-vis) + s
 }
 
 func formatCatalogAge(iso *string) string {
