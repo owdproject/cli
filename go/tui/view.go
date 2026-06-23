@@ -306,10 +306,10 @@ func (m *TuiModel) renderCatalogPanel(w, h int, _ bool) string {
 	if colNameW < 12 {
 		colNameW = 12
 	}
-	// Row prefix: " "(1) + badge(1) + "  "(2) = 4 chars before the name text.
-	// Header must use the same 4-char prefix and shrink NAME label by 3 to compensate.
-	header := "    " +
-		padRight("NAME", colNameW-3) + " " +
+	// Row prefix: " "(1) + badge(1) + "   "(3) = 5 chars before the name text.
+	// Header must use the same 5-char prefix and shrink NAME label by 4 to compensate.
+	header := "     " +
+		padRight("NAME", colNameW-4) + " " +
 		padRight("VERSION", 9) + " " +
 		padRight("SRC", 5) + " " +
 		padRight("SYNC", 14) + " " +
@@ -371,7 +371,7 @@ func (m *TuiModel) renderCatalogRow(item bridge.CatalogEntry, selected bool, w, 
 	}
 
 	shortName := item.ShortName
-	name := badge + "  " + shortName
+	name := badge + "   " + shortName
 
 	// ── VERSION ─────────────────────────────────────────────────
 	version := "—"
