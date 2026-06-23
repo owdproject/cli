@@ -19,9 +19,10 @@ func (m *TuiModel) View() string {
 	if w < 40 {
 		w = 40
 	}
-	if h < 10 {
-		h = 10
+	if h < 11 {
+		h = 11
 	}
+	h = h - 1 // Safety margin of 1 line at the bottom to prevent scrolling
 
 	showLogs := (m.serverRunning || m.activeTask != TaskNone) && w >= 120
 
@@ -583,26 +584,26 @@ func (m *TuiModel) renderStatusBar(w int) string {
 	}
 
 	line1Parts := []string{
-		statusIcon + barKeyStyle.Render("Select packages") + barStyle.Render(" · "),
+		statusIcon + barKeyStyle.Render("Select packages") + barTextStyle.Render(" · "),
 	}
 	if m.hasPendingChanges() {
-		line1Parts = append(line1Parts, barKeyStyle.Render("s") + barStyle.Render(" save changes · "))
+		line1Parts = append(line1Parts, barKeyStyle.Render("s") + barTextStyle.Render(" save changes · "))
 	}
 	line1Parts = append(line1Parts,
-		barKeyStyle.Render("g") + barStyle.Render(" settings"),
+		barKeyStyle.Render("g") + barTextStyle.Render(" settings"),
 	)
 
 	var serverShortcut string
 	if m.serverRunning {
-		serverShortcut = barKeyStyle.Render("x") + barStyle.Render(" stop server")
+		serverShortcut = barKeyStyle.Render("x") + barTextStyle.Render(" stop server")
 	} else {
-		serverShortcut = barKeyStyle.Render("d") + barStyle.Render(" start server")
+		serverShortcut = barKeyStyle.Render("d") + barTextStyle.Render(" start server")
 	}
 
 	if m.activeTask != TaskNone {
 		spinFrames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 		spin := cyanRegularStyle.Render(spinFrames[m.tickCount%len(spinFrames)])
-		line1Parts = []string{spin + " " + barStyle.Render(m.statusMsg)}
+		line1Parts = []string{spin + " " + barTextStyle.Render(m.statusMsg)}
 	}
 
 	_ = mode
@@ -612,9 +613,9 @@ func (m *TuiModel) renderStatusBar(w int) string {
 	sep := barSepStyle.Render(" │ ")
 	var shortcutParts []string
 	shortcutParts = append(shortcutParts,
-		barKeyStyle.Render("↑↓") + barStyle.Render(" move"),
-		barKeyStyle.Render("Space") + barStyle.Render(" toggle"),
-		barKeyStyle.Render("c") + barStyle.Render(" manage"),
+		barKeyStyle.Render("↑↓") + barTextStyle.Render(" move"),
+		barKeyStyle.Render("Space") + barTextStyle.Render(" toggle"),
+		barKeyStyle.Render("c") + barTextStyle.Render(" manage"),
 	)
 
 	items := m.getActiveItems()
@@ -623,14 +624,14 @@ func (m *TuiModel) renderStatusBar(w int) string {
 		hasHoveredInstalled = items[m.selectedIndex].Installed
 	}
 	if hasHoveredInstalled {
-		shortcutParts = append(shortcutParts, barKeyStyle.Render("u") + barStyle.Render(" update"))
+		shortcutParts = append(shortcutParts, barKeyStyle.Render("u") + barTextStyle.Render(" update"))
 	}
 
 	shortcutParts = append(shortcutParts,
 		serverShortcut,
-		barKeyStyle.Render("r") + barStyle.Render(" refresh"),
-		barKeyStyle.Render("n") + barStyle.Render(" new"),
-		barKeyStyle.Render("q") + barStyle.Render(" quit"),
+		barKeyStyle.Render("r") + barTextStyle.Render(" refresh"),
+		barKeyStyle.Render("n") + barTextStyle.Render(" new"),
+		barKeyStyle.Render("q") + barTextStyle.Render(" quit"),
 	)
 	line2 := barStyle.Width(w).Render(strings.Join(shortcutParts, sep))
 

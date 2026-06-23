@@ -66,6 +66,9 @@ var (
 			Foreground(colorBarFg).
 			PaddingLeft(2)
 
+	barTextStyle = lipgloss.NewStyle().
+			Foreground(colorBarFg)
+
 	barKeyStyle = lipgloss.NewStyle().
 			Foreground(colorAccent).
 			Bold(true)
