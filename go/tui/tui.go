@@ -193,6 +193,15 @@ const (
 	PromptWipeWorkspaceConfirm
 )
 
+type ActiveTask int
+
+const (
+	TaskNone ActiveTask = iota
+	TaskSetup
+	TaskWipe
+	TaskServe
+)
+
 var Program *tea.Program
 var ServerCmd *exec.Cmd
 
@@ -244,6 +253,7 @@ type TuiModel struct {
 	// Server status
 	serverRunning   bool
 	taskActive      bool
+	activeTask      ActiveTask
 	checkingUpdates bool
 
 	// Animation
@@ -299,6 +309,7 @@ func NewModel(root string) TuiModel {
 		setupStep:           0,
 		setupTotalSteps:     0,
 		setupLabel:          "",
+		activeTask:          TaskNone,
 	}
 }
 
@@ -677,6 +688,7 @@ func (m *TuiModel) processNextQueueDecision() tea.Cmd {
 
 func (m *TuiModel) applyQueueChangesCmd() tea.Cmd {
 	m.taskActive = true
+	m.activeTask = TaskSetup
 	m.statusMsg = "Applying queued package changes…"
 	m.addLog(">>> Applying queued package configuration changes…")
 
@@ -877,7 +889,7 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		promptToShow := m.activePrompt
-		if m.taskActive && (promptToShow == PromptNone || promptToShow == PromptUninstallConfirm || promptToShow == PromptInstallMethod || promptToShow == PromptWipeWorkspaceConfirm) {
+		if (m.activeTask == TaskSetup || m.activeTask == TaskWipe) && (promptToShow == PromptNone || promptToShow == PromptUninstallConfirm || promptToShow == PromptInstallMethod || promptToShow == PromptWipeWorkspaceConfirm) {
 			promptToShow = PromptSetupProgress
 		}
 		if promptToShow != PromptNone {
@@ -943,6 +955,7 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 				m.statusMsg = "Starting dev server…"
 				m.taskActive = true
+				m.activeTask = TaskServe
 				if Program != nil {
 					m.RunServeTask(Program)
 				}
@@ -951,6 +964,7 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.serverRunning {
 				m.statusMsg = "Stopping dev server…"
 				m.taskActive = true
+				m.activeTask = TaskServe
 				if Program != nil {
 					m.StopServeTask(Program)
 				}
@@ -1001,6 +1015,7 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				pkg := items[m.selectedIndex]
 				if pkg.Installed && !m.taskActive {
 					m.taskActive = true
+					m.activeTask = TaskSetup
 					m.statusMsg = fmt.Sprintf("Updating %s…", pkg.ShortName)
 					if Program != nil {
 						m.RunUpdatePackageTask(pkg.Name, pkg.ShortName, pkg.Kind, pkg.LocalSource, Program)
@@ -1047,6 +1062,7 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if themeChanged && m.serverRunning {
 				m.statusMsg = "Rebooting server for theme change…"
 				m.taskActive = true
+				m.activeTask = TaskServe
 				return m, m.rebootServerCmd()
 			}
 
@@ -1129,6 +1145,7 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case taskFinishedMsg:
 		m.taskActive = false
+		m.activeTask = TaskNone
 		if msg.Success {
 			m.statusMsg = "Task completed."
 			m.addLog(">>> Task completed successfully.")
@@ -1140,7 +1157,10 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case serverStatusMsg:
 		m.serverRunning = msg.Running
-		m.taskActive = false
+		if m.activeTask == TaskServe {
+			m.taskActive = false
+			m.activeTask = TaskNone
+		}
 		if !msg.Running {
 			m.statusMsg = "Dev server stopped."
 		} else {
@@ -1164,7 +1184,7 @@ func (m *TuiModel) addLog(line string) {
 
 func (m TuiModel) handlePromptKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	promptToShow := m.activePrompt
-	if m.taskActive && (promptToShow == PromptNone || promptToShow == PromptUninstallConfirm || promptToShow == PromptInstallMethod || promptToShow == PromptWipeWorkspaceConfirm) {
+	if (m.activeTask == TaskSetup || m.activeTask == TaskWipe) && (promptToShow == PromptNone || promptToShow == PromptUninstallConfirm || promptToShow == PromptInstallMethod || promptToShow == PromptWipeWorkspaceConfirm) {
 		promptToShow = PromptSetupProgress
 	}
 	if promptToShow == PromptSetupProgress {
@@ -1257,6 +1277,7 @@ func (m TuiModel) handlePromptKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if m.promptSel == 0 { // Yes
 				m.activePrompt = PromptNone
 				m.taskActive = true
+				m.activeTask = TaskWipe
 				m.statusMsg = "Resetting workspace…"
 				m.addLog(">>> Initiating workspace reset task…")
 				return m, m.runWipeWorkspaceCmd()
@@ -1436,6 +1457,7 @@ func (m TuiModel) handlePromptKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m TuiModel) triggerUninstall(pkg *bridge.CatalogEntry) (tea.Model, tea.Cmd) {
 	m.taskActive = true
+	m.activeTask = TaskSetup
 	m.statusMsg = fmt.Sprintf("Uninstalling %s…", pkg.ShortName)
 	m.addLog(fmt.Sprintf(">>> Uninstalling %s", pkg.Name))
 
@@ -1466,6 +1488,7 @@ func (m TuiModel) triggerUninstall(pkg *bridge.CatalogEntry) (tea.Model, tea.Cmd
 
 	if err := bridge.WriteChanges(m.workspaceRoot, payload); err != nil {
 		m.taskActive = false
+		m.activeTask = TaskNone
 		m.statusMsg = fmt.Sprintf("Uninstall failed: %v", err)
 		return m, nil
 	}
@@ -1477,6 +1500,7 @@ func (m TuiModel) triggerUninstall(pkg *bridge.CatalogEntry) (tea.Model, tea.Cmd
 
 func (m TuiModel) triggerInstall(pkg *bridge.CatalogEntry, method string) (tea.Model, tea.Cmd) {
 	m.taskActive = true
+	m.activeTask = TaskSetup
 	m.statusMsg = fmt.Sprintf("Installing %s via %s…", pkg.ShortName, method)
 	m.addLog(fmt.Sprintf(">>> Installing %s via %s", pkg.Name, method))
 
@@ -1523,6 +1547,7 @@ func (m TuiModel) triggerInstall(pkg *bridge.CatalogEntry, method string) (tea.M
 
 	if err := bridge.WriteChanges(m.workspaceRoot, payload); err != nil {
 		m.taskActive = false
+		m.activeTask = TaskNone
 		m.statusMsg = fmt.Sprintf("Install failed: %v", err)
 		return m, nil
 	}
@@ -1534,6 +1559,7 @@ func (m TuiModel) triggerInstall(pkg *bridge.CatalogEntry, method string) (tea.M
 
 func (m TuiModel) triggerForceReinstall(pkg *bridge.CatalogEntry) (tea.Model, tea.Cmd) {
 	m.taskActive = true
+	m.activeTask = TaskSetup
 	m.statusMsg = fmt.Sprintf("Force reinstalling %s…", pkg.ShortName)
 	m.addLog(fmt.Sprintf(">>> Deleting local folder and reinstalling %s", pkg.Name))
 
@@ -1580,6 +1606,7 @@ func (m TuiModel) triggerForceReinstall(pkg *bridge.CatalogEntry) (tea.Model, te
 
 func (m TuiModel) triggerUpdate(pkg *bridge.CatalogEntry) (tea.Model, tea.Cmd) {
 	m.taskActive = true
+	m.activeTask = TaskSetup
 	m.statusMsg = fmt.Sprintf("Updating %s…", pkg.ShortName)
 	m.addLog(fmt.Sprintf(">>> Updating %s", pkg.Name))
 
@@ -2100,7 +2127,7 @@ func (m TuiModel) View() string {
 		catalogContent := m.renderCatalogPanel(catW-4, catalogH-2, showLogs)
 		catalogPanel = drawPanel(catW-1, catalogH, "Catalog", catalogContent, true)
 		promptToShow := m.activePrompt
-		if m.taskActive && (promptToShow == PromptNone || promptToShow == PromptUninstallConfirm || promptToShow == PromptInstallMethod || promptToShow == PromptWipeWorkspaceConfirm) {
+		if (m.activeTask == TaskSetup || m.activeTask == TaskWipe) && (promptToShow == PromptNone || promptToShow == PromptUninstallConfirm || promptToShow == PromptInstallMethod || promptToShow == PromptWipeWorkspaceConfirm) {
 			promptToShow = PromptSetupProgress
 		}
 		if promptToShow != PromptNone {
@@ -2132,7 +2159,7 @@ func (m TuiModel) View() string {
 		catalogContent := m.renderCatalogPanel(w-4, catalogH-2, showLogs)
 		catalogPanel = drawPanel(w, catalogH, "Catalog", catalogContent, true)
 		promptToShow := m.activePrompt
-		if m.taskActive && (promptToShow == PromptNone || promptToShow == PromptUninstallConfirm || promptToShow == PromptInstallMethod || promptToShow == PromptWipeWorkspaceConfirm) {
+		if (m.activeTask == TaskSetup || m.activeTask == TaskWipe) && (promptToShow == PromptNone || promptToShow == PromptUninstallConfirm || promptToShow == PromptInstallMethod || promptToShow == PromptWipeWorkspaceConfirm) {
 			promptToShow = PromptSetupProgress
 		}
 		if promptToShow != PromptNone {
@@ -3343,6 +3370,12 @@ func (m *TuiModel) RunSetupTask(adds map[string]string, p *tea.Program) {
 			// Resolve theme dependencies if it's a theme
 			isTheme := strings.HasPrefix(shortName, "theme-")
 			if isTheme {
+				if method == "npm" {
+					p.Send(logLineMsg(">>> Running pnpm install to fetch theme package…"))
+					if err := runProcessAndStreamLogsSilent(m.workspaceRoot, "pnpm", []string{"install"}, p); err != nil {
+						p.Send(logLineMsg(fmt.Sprintf(">>> Theme pnpm install failed: %v", err)))
+					}
+				}
 				p.Send(logLineMsg(">>> Resolving theme dependencies…"))
 				deps, err := getThemeDependencies(m.workspaceRoot, shortName)
 				if err == nil {
@@ -3913,6 +3946,7 @@ func getThemeDependencies(workspaceRoot, themeShortName string) ([]string, error
 	var pathsToCheck []string
 	pathsToCheck = append(pathsToCheck, filepath.Join(workspaceRoot, "themes", themeShortName, "package.json"))
 	pathsToCheck = append(pathsToCheck, filepath.Join(workspaceRoot, "node_modules", "@owdproject", themeShortName, "package.json"))
+	pathsToCheck = append(pathsToCheck, filepath.Join(workspaceRoot, "desktop", "node_modules", "@owdproject", themeShortName, "package.json"))
 
 	var data []byte
 	var err error
