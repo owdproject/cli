@@ -458,6 +458,17 @@ func (m *TuiModel) startStartupCheck() tea.Cmd {
 		return nil
 	}
 
+	// Non-installable core packages — never prompt for these
+	nonInstallable := map[string]bool{
+		"@owdproject/core": true,
+		"@owdproject/cli":  true,
+		"@owdproject/nx":   true,
+	}
+
+	// Track what is already queued to avoid duplicates
+	queued := map[string]bool{}
+
+	// Round 1: apps, modules, and theme from catalog
 	for _, entry := range m.catalog.Entries {
 		if entry.Installed && !entry.LocalSource {
 			m.promptQueue = append(m.promptQueue, pendingDecision{
@@ -467,6 +478,75 @@ func (m *TuiModel) startStartupCheck() tea.Cmd {
 				Kind:      entry.Kind,
 				Entry:     entry,
 			})
+			queued[entry.Name] = true
+		}
+	}
+
+	// Round 2: find the active/pending theme and read its kit/module deps
+	var activeThemeShort string
+	for _, dec := range m.promptQueue {
+		if dec.Kind == "theme" {
+			activeThemeShort = dec.ShortName
+			break
+		}
+	}
+	// Also check the current config theme if not in queue
+	if activeThemeShort == "" && m.ctx != nil && m.ctx.Config.Theme != nil && *m.ctx.Config.Theme != "" {
+		themeName := *m.ctx.Config.Theme
+		if idx := strings.LastIndex(themeName, "/"); idx >= 0 {
+			activeThemeShort = themeName[idx+1:]
+		} else {
+			activeThemeShort = themeName
+		}
+	}
+
+	if activeThemeShort != "" {
+		themeDeps, err := getThemeDependencies(m.workspaceRoot, activeThemeShort)
+		if err == nil {
+			for _, dep := range themeDeps {
+				if nonInstallable[dep] || queued[dep] {
+					continue
+				}
+				// Only kit-* and module-* prefixed @owdproject packages
+				short := dep
+				if idx := strings.LastIndex(dep, "/"); idx >= 0 {
+					short = dep[idx+1:]
+				}
+				if !strings.HasPrefix(short, "kit-") && !strings.HasPrefix(short, "module-") {
+					continue
+				}
+				// Skip if already installed locally
+				if isLocallyAvailable(m.workspaceRoot, short) {
+					continue
+				}
+				// Find in catalog (may not be listed)
+				var entry *bridge.CatalogEntry
+				if m.catalog != nil {
+					for _, e := range m.catalog.Entries {
+						if e.Name == dep {
+							entry = &e
+							break
+						}
+					}
+				}
+				if entry == nil {
+					// Synthesize a minimal entry for the wizard
+					synth := bridge.CatalogEntry{
+						Name:      dep,
+						ShortName: short,
+						Kind:      "module",
+					}
+					entry = &synth
+				}
+				m.promptQueue = append(m.promptQueue, pendingDecision{
+					PkgName:   dep,
+					ShortName: short,
+					Action:    "install",
+					Kind:      entry.Kind,
+					Entry:     *entry,
+				})
+				queued[dep] = true
+			}
 		}
 	}
 
@@ -732,12 +812,13 @@ func (m *TuiModel) applyQueueChangesCmd() tea.Cmd {
 			return taskFinishedMsg{Success: false, Err: err}
 		}
 
-		// Trigger setup task
+		// Trigger setup task in background — return a log line so bubbletea
+		// keeps taskActive=true until RunSetupTask sends taskFinishedMsg.
 		if Program != nil {
 			m.RunSetupTask(finalAdds, Program)
 		}
 
-		return nil
+		return logLineMsg(">>> Workspace changes written. Running setup task…")
 	}
 }
 
@@ -3811,6 +3892,22 @@ func (m TuiModel) checkForUpdatesCmd() tea.Cmd {
 // ─────────────────────────────────────────────
 // Theme Dependencies & Package Metadata Helpers
 // ─────────────────────────────────────────────
+
+// isLocallyAvailable checks if a package (by short name) exists as a local
+// workspace directory under apps/, themes/, or packages/.
+func isLocallyAvailable(workspaceRoot, shortName string) bool {
+	candidates := []string{
+		filepath.Join(workspaceRoot, "apps", shortName),
+		filepath.Join(workspaceRoot, "themes", shortName),
+		filepath.Join(workspaceRoot, "packages", shortName),
+	}
+	for _, p := range candidates {
+		if info, err := os.Stat(p); err == nil && info.IsDir() {
+			return true
+		}
+	}
+	return false
+}
 
 func getThemeDependencies(workspaceRoot, themeShortName string) ([]string, error) {
 	var pathsToCheck []string
