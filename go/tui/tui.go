@@ -24,6 +24,7 @@ func NewModel(root string) TuiModel {
 		memHistory:       []int{},
 		gitChangesMap:    make(map[string]GitChanges),
 		updatesMap:       make(map[string]UpdateInfo),
+		localGitDirs:     make(map[string]bool),
 		settingsSel:      0,
 		termWidth:        160,
 		termHeight:       40,
@@ -156,10 +157,12 @@ func (m *TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.tickCount%4 == 0 {
 			m.blink = !m.blink
 		}
-		
-		var statusCmd tea.Cmd
+
+		var cmds []tea.Cmd
+		cmds = append(cmds, tickCmd())
+
+		// Every ~1.5s: sample memory + check server status
 		if m.tickCount%10 == 0 {
-			// Sample Nuxt process memory stats
 			var mb int
 			if m.ctx != nil {
 				pidPath := filepath.Join(m.ctx.Paths.MetaDir, "dev.pid")
@@ -175,22 +178,22 @@ func (m *TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.memHistory = m.memHistory[1:]
 			}
 			if m.ctx != nil {
-				statusCmd = m.checkServerStatusCmd()
+				cmds = append(cmds, m.checkServerStatusCmd())
 			}
 		}
-		
+
+		// Every ~15s: fast local git status check (no network)
 		if m.tickCount%100 == 0 && !m.loading && m.activeTask == TaskNone && !m.checkingUpdates {
 			m.checkingUpdates = true
-			if statusCmd != nil {
-				return m, tea.Batch(tickCmd(), statusCmd, m.checkForUpdatesCmd())
-			}
-			return m, tea.Batch(tickCmd(), m.checkForUpdatesCmd())
+			cmds = append(cmds, m.checkLocalChangesCmd())
 		}
-		
-		if statusCmd != nil {
-			return m, tea.Batch(tickCmd(), statusCmd)
+
+		// Every ~5min: slow remote check (git behind without fetch + npm versions)
+		if m.tickCount%2000 == 0 && !m.loading && m.activeTask == TaskNone {
+			cmds = append(cmds, m.checkRemoteUpdatesCmd())
 		}
-		return m, tickCmd()
+
+		return m, tea.Batch(cmds...)
 
 	case tea.KeyMsg:
 		promptToShow := m.activePrompt
@@ -373,18 +376,20 @@ func (m *TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.catalog = msg.Cat
 			m.statusMsg = fmt.Sprintf("Catalog loaded (%s).", msg.Cat.CacheAge)
 
+			// Run fast local check immediately; schedule remote check too
 			m.checkingUpdates = true
-			return m, m.checkForUpdatesCmd()
+			return m, tea.Batch(m.checkLocalChangesCmd(), m.checkRemoteUpdatesCmd())
 		}
 
-	case updatesLoadedMsg:
+	case localChangesMsg:
 		m.gitChangesMap = msg.GitChanges
-		m.updatesMap = msg.Updates
+		m.localGitDirs = msg.LocalGitDirs
 		m.checkingUpdates = false
 		m.loading = false
-		if msg.Err != nil {
-			m.statusMsg = fmt.Sprintf("⚠️ Updates check failed: %v", msg.Err)
-		} else {
+
+	case remoteUpdatesMsg:
+		m.updatesMap = msg.Updates
+		if msg.Err == nil {
 			count := 0
 			for _, up := range msg.Updates {
 				if up.LocalGit || up.Npm {
@@ -392,9 +397,7 @@ func (m *TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 			if count > 0 {
-				m.statusMsg = fmt.Sprintf("Updates check completed: %d update(s) available.", count)
-			} else {
-				m.statusMsg = "All packages are up to date."
+				m.statusMsg = fmt.Sprintf("%d update(s) available.", count)
 			}
 		}
 
@@ -488,24 +491,80 @@ func (m *TuiModel) addLog(line string) {
 }
 
 
-func (m *TuiModel) checkForUpdatesCmd() tea.Cmd {
+// checkLocalChangesCmd runs a fast local-only git status check for every catalog entry.
+// No network activity — only reads the local working tree.
+// Runs every ~15s. Also detects which packages have their own .git folder.
+func (m *TuiModel) checkLocalChangesCmd() tea.Cmd {
 	return func() tea.Msg {
 		gitChangesMap := make(map[string]GitChanges)
+		localGitDirs := make(map[string]bool)
+
+		if m.catalog == nil {
+			return localChangesMsg{GitChanges: gitChangesMap, LocalGitDirs: localGitDirs}
+		}
+
+		for _, entry := range m.catalog.Entries {
+			short := entry.ShortName
+			var kindDir string
+			switch entry.Kind {
+			case "app":
+				kindDir = "apps"
+			case "module":
+				kindDir = "packages"
+			case "theme":
+				kindDir = "themes"
+			}
+			if kindDir == "" {
+				continue
+			}
+
+			pkgPath := filepath.Join(m.workspaceRoot, kindDir, short)
+			gitDir := filepath.Join(pkgPath, ".git")
+
+			if _, err := os.Stat(gitDir); err == nil {
+				// Package has its own .git repo
+				localGitDirs[short] = true
+				added, modified, deleted, err := runGitStatus(pkgPath)
+				if err == nil && (added > 0 || modified > 0 || deleted > 0) {
+					gitChangesMap[short] = GitChanges{Added: added, Modified: modified, Deleted: deleted}
+				}
+			} else {
+				// Fallback: check monorepo git for this subdirectory
+				parentGitDir := filepath.Join(m.workspaceRoot, ".git")
+				if _, err := os.Stat(parentGitDir); err == nil {
+					relPath := filepath.Join(kindDir, short)
+					added, modified, deleted, err := runGitStatusForSubdir(m.workspaceRoot, relPath)
+					if err == nil && (added > 0 || modified > 0 || deleted > 0) {
+						gitChangesMap[short] = GitChanges{Added: added, Modified: modified, Deleted: deleted}
+					}
+				}
+			}
+		}
+
+		return localChangesMsg{GitChanges: gitChangesMap, LocalGitDirs: localGitDirs}
+	}
+}
+
+// checkRemoteUpdatesCmd runs the slow network-dependent checks:
+// - git behind count (uses cached remote refs, NO git fetch)
+// - npm latest version check
+// Runs every ~5 minutes.
+func (m *TuiModel) checkRemoteUpdatesCmd() tea.Cmd {
+	return func() tea.Msg {
 		updatesMap := make(map[string]UpdateInfo)
 
 		if m.catalog == nil {
-			return updatesLoadedMsg{GitChanges: gitChangesMap, Updates: updatesMap}
+			return remoteUpdatesMsg{Updates: updatesMap}
 		}
 
 		type result struct {
 			shortName string
-			changes   *GitChanges
 			update    *UpdateInfo
 			err       error
 		}
 
 		resultsChan := make(chan result, len(m.catalog.Entries))
-		sem := make(chan struct{}, 10) // Limit concurrency
+		sem := make(chan struct{}, 5) // modest concurrency — these are network ops
 
 		for _, e := range m.catalog.Entries {
 			sem <- struct{}{}
@@ -514,9 +573,8 @@ func (m *TuiModel) checkForUpdatesCmd() tea.Cmd {
 
 				res := result{shortName: entry.ShortName}
 
-				// 1. Check local changes & upstream behind counts
 				short := entry.ShortName
-				kindDir := ""
+				var kindDir string
 				switch entry.Kind {
 				case "app":
 					kindDir = "apps"
@@ -526,33 +584,19 @@ func (m *TuiModel) checkForUpdatesCmd() tea.Cmd {
 					kindDir = "themes"
 				}
 
+				// 1. Git behind check (NO fetch — uses cached remote refs)
 				if kindDir != "" {
 					pkgPath := filepath.Join(m.workspaceRoot, kindDir, short)
 					gitDir := filepath.Join(pkgPath, ".git")
 					if _, err := os.Stat(gitDir); err == nil {
-						added, modified, deleted, err := runGitStatus(pkgPath)
-						if err == nil && (added > 0 || modified > 0 || deleted > 0) {
-							res.changes = &GitChanges{Added: added, Modified: modified, Deleted: deleted}
-						}
-
-						behind, err := runGitBehindCheck(pkgPath)
+						behind, err := runGitBehindCheckNoFetch(pkgPath)
 						if err == nil && behind > 0 {
 							res.update = &UpdateInfo{LocalGit: true, BehindCount: behind}
-						}
-					} else {
-						// Fallback: Check if the monorepo itself tracks changes for this directory
-						parentGitDir := filepath.Join(m.workspaceRoot, ".git")
-						if _, err := os.Stat(parentGitDir); err == nil {
-							relPath := filepath.Join(kindDir, short)
-							added, modified, deleted, err := runGitStatusForSubdir(m.workspaceRoot, relPath)
-							if err == nil && (added > 0 || modified > 0 || deleted > 0) {
-								res.changes = &GitChanges{Added: added, Modified: modified, Deleted: deleted}
-							}
 						}
 					}
 				}
 
-				// 2. Check NPM updates
+				// 2. NPM latest version check
 				if entry.Installed && !entry.LocalSource {
 					localVer := getLocalVersion(m.workspaceRoot, entry)
 					if localVer != "" {
@@ -572,9 +616,6 @@ func (m *TuiModel) checkForUpdatesCmd() tea.Cmd {
 		var checkErr error
 		for i := 0; i < len(m.catalog.Entries); i++ {
 			res := <-resultsChan
-			if res.changes != nil {
-				gitChangesMap[res.shortName] = *res.changes
-			}
 			if res.update != nil {
 				updatesMap[res.shortName] = *res.update
 			}
@@ -583,7 +624,7 @@ func (m *TuiModel) checkForUpdatesCmd() tea.Cmd {
 			}
 		}
 
-		return updatesLoadedMsg{GitChanges: gitChangesMap, Updates: updatesMap, Err: checkErr}
+		return remoteUpdatesMsg{Updates: updatesMap, Err: checkErr}
 	}
 }
 

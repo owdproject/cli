@@ -235,6 +235,37 @@ func runGitBehindCheck(dir string) (int, error) {
 	return behind, err
 }
 
+// runGitBehindCheckNoFetch checks how many commits behind the remote the local repo is,
+// WITHOUT running git fetch. Uses already-cached remote refs only — no network activity.
+func runGitBehindCheckNoFetch(dir string) (int, error) {
+	cmdRev := exec.Command("git", "rev-list", "--count", "HEAD..@{u}")
+	cmdRev.Dir = dir
+	out, err := cmdRev.Output()
+	if err != nil {
+		// Fallback: try origin/<branch>
+		cmdBranch := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
+		cmdBranch.Dir = dir
+		branchOut, errBranch := cmdBranch.Output()
+		if errBranch != nil {
+			return 0, errBranch
+		}
+		branch := strings.TrimSpace(string(branchOut))
+		if branch == "" || branch == "HEAD" {
+			return 0, err
+		}
+		cmdRev = exec.Command("git", "rev-list", "--count", fmt.Sprintf("HEAD..origin/%s", branch))
+		cmdRev.Dir = dir
+		out, err = cmdRev.Output()
+		if err != nil {
+			return 0, err
+		}
+	}
+	var behind int
+	_, err = fmt.Sscanf(strings.TrimSpace(string(out)), "%d", &behind)
+	return behind, err
+}
+
+
 func fetchLatestNpmVersion(pkgName string) (string, error) {
 	client := &http.Client{Timeout: 3 * time.Second}
 	resp, err := client.Get(fmt.Sprintf("https://registry.npmjs.org/%s/latest", url.PathEscape(pkgName)))

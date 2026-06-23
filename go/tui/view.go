@@ -379,20 +379,8 @@ func (m *TuiModel) renderCatalogRow(item bridge.CatalogEntry, selected bool, w, 
 
 	source := "npm"
 	if item.LocalSource {
-		if m.ctx != nil && m.ctx.Settings.LastInstallChoices != nil {
-			if choice, exists := m.ctx.Settings.LastInstallChoices[item.Name]; exists {
-				if choiceMap, ok := choice.(map[string]interface{}); ok {
-					if _, hasGit := choiceMap["gitUrl"].(string); hasGit {
-						source = "git"
-					} else {
-						source = "dev"
-					}
-				} else {
-					source = "dev"
-				}
-			} else {
-				source = "dev"
-			}
+		if m.localGitDirs[item.ShortName] {
+			source = "git"
 		} else {
 			source = "dev"
 		}
@@ -419,7 +407,7 @@ func (m *TuiModel) renderCatalogRow(item bridge.CatalogEntry, selected bool, w, 
 	}
 
 	// Git behind indicator
-	if upInfo, ok := m.updatesMap[item.Name]; ok {
+	if upInfo, ok := m.updatesMap[item.ShortName]; ok {
 		if upInfo.LocalGit && upInfo.BehindCount > 0 {
 			status += warnStyle.Render(fmt.Sprintf(" (-%d)", upInfo.BehindCount))
 		} else if upInfo.Npm {
@@ -428,7 +416,7 @@ func (m *TuiModel) renderCatalogRow(item bridge.CatalogEntry, selected bool, w, 
 	}
 
 	// Local edits indicator (Git dirty status)
-	if gitStat, ok := m.gitChangesMap[item.Name]; ok {
+	if gitStat, ok := m.gitChangesMap[item.ShortName]; ok {
 		total := gitStat.Added + gitStat.Modified + gitStat.Deleted
 		if total > 0 {
 			status += dirtyIndicatorStyle.Render("*")

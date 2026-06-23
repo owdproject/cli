@@ -65,10 +65,16 @@ type UpdateInfo struct {
 	Npm         bool
 }
 
-type updatesLoadedMsg struct {
-	GitChanges map[string]GitChanges
-	Updates    map[string]UpdateInfo
-	Err        error
+// localChangesMsg is the result of the fast local-only git status check (no network).
+type localChangesMsg struct {
+	GitChanges   map[string]GitChanges
+	LocalGitDirs map[string]bool // shortName -> has .git folder
+}
+
+// remoteUpdatesMsg is the result of the slow network check (git behind + npm versions).
+type remoteUpdatesMsg struct {
+	Updates map[string]UpdateInfo
+	Err     error
 }
 
 type setupProgressMsg struct {
@@ -179,6 +185,7 @@ type TuiModel struct {
 
 	gitChangesMap map[string]GitChanges
 	updatesMap    map[string]UpdateInfo
+	localGitDirs  map[string]bool // shortName -> has own .git folder
 
 	settingsSel         int
 	settingsInstallMode string
