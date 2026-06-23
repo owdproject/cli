@@ -306,8 +306,10 @@ func (m *TuiModel) renderCatalogPanel(w, h int, _ bool) string {
 	if colNameW < 12 {
 		colNameW = 12
 	}
-	header := "   " +
-		padRight("NAME", colNameW) + " " +
+	// Row prefix: " "(1) + badge(1) + "  "(2) = 4 chars before the name text.
+	// Header must use the same 4-char prefix and shrink NAME label by 3 to compensate.
+	header := "    " +
+		padRight("NAME", colNameW-3) + " " +
 		padRight("VERSION", 9) + " " +
 		padRight("SRC", 5) + " " +
 		padRight("SYNC", 14) + " " +
