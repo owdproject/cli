@@ -168,6 +168,12 @@ type updatesLoadedMsg struct {
 	Updates    map[string]UpdateInfo
 }
 
+type setupProgressMsg struct {
+	Step  int
+	Total int
+	Label string
+}
+
 // ─────────────────────────────────────────────
 // Prompt states
 // ─────────────────────────────────────────────
@@ -183,6 +189,7 @@ const (
 	PromptSettings
 	PromptThemeDepConfirm
 	PromptThemeDepMethod
+	PromptSetupProgress
 )
 
 var Program *tea.Program
@@ -263,6 +270,9 @@ type TuiModel struct {
 	themeDepResolveChan chan themeDepDecision
 	activeThemeDep      string
 	startupCheckDone    bool
+	setupStep           int
+	setupTotalSteps     int
+	setupLabel          string
 }
 
 func NewModel(root string) TuiModel {
@@ -285,6 +295,9 @@ func NewModel(root string) TuiModel {
 		finalizedAdds:    make(map[string]string),
 		themeDepResolveChan: make(chan themeDepDecision, 1),
 		startupCheckDone:    false,
+		setupStep:           0,
+		setupTotalSteps:     0,
+		setupLabel:          "",
 	}
 }
 
@@ -781,7 +794,11 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tickCmd()
 
 	case tea.KeyMsg:
-		if m.activePrompt != PromptNone {
+		promptToShow := m.activePrompt
+		if m.taskActive && (promptToShow == PromptNone || promptToShow == PromptUninstallConfirm || promptToShow == PromptInstallMethod) {
+			promptToShow = PromptSetupProgress
+		}
+		if promptToShow != PromptNone {
 			return m.handlePromptKeys(msg)
 		}
 		switch msg.String() {
@@ -990,6 +1007,12 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.statusMsg = "All packages are up to date."
 		}
+
+	case setupProgressMsg:
+		m.setupStep = msg.Step
+		m.setupTotalSteps = msg.Total
+		m.setupLabel = msg.Label
+		return m, nil
 	case promptThemeDepMsg:
 		m.activePrompt = PromptThemeDepConfirm
 		m.activeThemeDep = msg.DepName
@@ -1065,6 +1088,17 @@ func (m *TuiModel) addLog(line string) {
 // ─────────────────────────────────────────────
 
 func (m TuiModel) handlePromptKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	promptToShow := m.activePrompt
+	if m.taskActive && (promptToShow == PromptNone || promptToShow == PromptUninstallConfirm || promptToShow == PromptInstallMethod) {
+		promptToShow = PromptSetupProgress
+	}
+	if promptToShow == PromptSetupProgress {
+		if msg.String() == "ctrl+c" {
+			return m, tea.Quit
+		}
+		return m, nil
+	}
+
 	switch msg.String() {
 	case "esc", "q":
 		if m.activePrompt == PromptThemeDepConfirm || m.activePrompt == PromptThemeDepMethod {
@@ -1969,8 +2003,12 @@ func (m TuiModel) View() string {
 		// Catalog panel — always rendered; modal overlaid on top if active
 		catalogContent := m.renderCatalogPanel(catW-4, catalogH-2, showLogs)
 		catalogPanel = drawPanel(catW-1, catalogH, "Catalog", catalogContent, true)
-		if m.activePrompt != PromptNone {
-			modal := m.renderModal()
+		promptToShow := m.activePrompt
+		if m.taskActive && (promptToShow == PromptNone || promptToShow == PromptUninstallConfirm || promptToShow == PromptInstallMethod) {
+			promptToShow = PromptSetupProgress
+		}
+		if promptToShow != PromptNone {
+			modal := m.renderModal(promptToShow)
 			styledModal := lipgloss.NewStyle().
 				Border(lipgloss.RoundedBorder()).
 				BorderForeground(colorCyan).
@@ -1997,8 +2035,12 @@ func (m TuiModel) View() string {
 		// Catalog full width — always rendered; modal overlaid on top if active
 		catalogContent := m.renderCatalogPanel(w-4, catalogH-2, showLogs)
 		catalogPanel = drawPanel(w, catalogH, "Catalog", catalogContent, true)
-		if m.activePrompt != PromptNone {
-			modal := m.renderModal()
+		promptToShow := m.activePrompt
+		if m.taskActive && (promptToShow == PromptNone || promptToShow == PromptUninstallConfirm || promptToShow == PromptInstallMethod) {
+			promptToShow = PromptSetupProgress
+		}
+		if promptToShow != PromptNone {
+			modal := m.renderModal(promptToShow)
 			styledModal := lipgloss.NewStyle().
 				Border(lipgloss.RoundedBorder()).
 				BorderForeground(colorCyan).
@@ -2710,11 +2752,32 @@ func (m TuiModel) getInstallMethods(pkg *bridge.CatalogEntry) []InstallMethod {
 // Modal
 // ─────────────────────────────────────────────
 
-func (m TuiModel) renderModal() string {
+func renderProgressBar(step, total, width int) string {
+	if total <= 0 {
+		return lipgloss.NewStyle().Foreground(colorDim).Render(strings.Repeat("░", width))
+	}
+	filledWidth := (step * width) / total
+	if filledWidth > width {
+		filledWidth = width
+	}
+	if filledWidth < 0 {
+		filledWidth = 0
+	}
+	emptyWidth := width - filledWidth
+	filled := lipgloss.NewStyle().Foreground(colorCyan).Render(strings.Repeat("█", filledWidth))
+	empty := lipgloss.NewStyle().Foreground(colorDim).Render(strings.Repeat("░", emptyWidth))
+	return filled + empty
+}
+
+// ─────────────────────────────────────────────
+// Modal
+// ─────────────────────────────────────────────
+
+func (m TuiModel) renderModal(prompt PromptType) string {
 	pkg := m.promptPkg
 	var content strings.Builder
 
-	if m.activePrompt == PromptInstallMethod {
+	if prompt == PromptInstallMethod {
 		content.WriteString(boldStyle.Render("Install source for ") + accentStyle.Render(pkg.ShortName) + "\n\n")
 		methods := m.getInstallMethods(pkg)
 		for i, mth := range methods {
@@ -2736,7 +2799,7 @@ func (m TuiModel) renderModal() string {
 		}
 		content.WriteString("\n" + subtleStyle.Render("↑↓ select  Enter confirm  Esc cancel"))
 		return modalStyle.Width(72).Render(content.String())
-	} else if m.activePrompt == PromptThemeDepMethod {
+	} else if prompt == PromptThemeDepMethod {
 		content.WriteString(boldStyle.Render("Install source for theme dependency: ") + accentStyle.Render(pkg.ShortName) + "\n\n")
 		methods := m.getInstallMethods(pkg)
 		for i, mth := range methods {
@@ -2758,7 +2821,7 @@ func (m TuiModel) renderModal() string {
 		}
 		content.WriteString("\n" + subtleStyle.Render("↑↓ select  Enter confirm  Esc cancel"))
 		return modalStyle.Width(72).Render(content.String())
-	} else if m.activePrompt == PromptThemeDepConfirm {
+	} else if prompt == PromptThemeDepConfirm {
 		content.WriteString(boldStyle.Render("Theme dependency required: ") + accentStyle.Render(pkg.ShortName) + "\n")
 		content.WriteString(subtleStyle.Render("The active or queued theme requires this package to function correctly.") + "\n\n")
 		content.WriteString(boldStyle.Render("Install ") + accentStyle.Render(pkg.ShortName) + boldStyle.Render("?") + "\n\n")
@@ -2776,7 +2839,7 @@ func (m TuiModel) renderModal() string {
 			content.WriteString("  ")
 		}
 		content.WriteString("\n\n" + subtleStyle.Render("← → select  Enter confirm  Esc cancel"))
-	} else if m.activePrompt == PromptUninstallConfirm {
+	} else if prompt == PromptUninstallConfirm {
 		content.WriteString(boldStyle.Render("Uninstall ") + errStyle.Render(pkg.ShortName) + boldStyle.Render("?") + "\n\n")
 		opts := []string{"Yes, uninstall", "No, keep it"}
 		for i, opt := range opts {
@@ -2792,7 +2855,7 @@ func (m TuiModel) renderModal() string {
 			content.WriteString("  ")
 		}
 		content.WriteString("\n\n" + subtleStyle.Render("← → select  Enter confirm  Esc cancel"))
-	} else if m.activePrompt == PromptForceReinstallConfirm {
+	} else if prompt == PromptForceReinstallConfirm {
 		content.WriteString(boldStyle.Render("Force re-download ") + errStyle.Render(pkg.ShortName) + boldStyle.Render("?") + "\n")
 		content.WriteString(warnStyle.Render("⚠ WARNING: This will delete the local directory and lose all modifications!") + "\n\n")
 		opts := []string{"Yes, wipe & reinstall", "No, cancel"}
@@ -2809,7 +2872,19 @@ func (m TuiModel) renderModal() string {
 			content.WriteString("  ")
 		}
 		content.WriteString("\n\n" + subtleStyle.Render("← → select  Enter confirm  Esc cancel"))
-	} else if m.activePrompt == PromptManagePackage {
+	} else if prompt == PromptSetupProgress {
+		spinnerFrames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+		frame := spinnerFrames[m.tickCount%len(spinnerFrames)]
+		spin := lipgloss.NewStyle().Foreground(colorCyan).Bold(true).Render(frame)
+
+		content.WriteString(boldStyle.Render("Installing packages…") + "\n\n")
+		content.WriteString("  " + spin + " " + boldStyle.Render(m.setupLabel) + "\n\n")
+
+		bar := renderProgressBar(m.setupStep, m.setupTotalSteps, 40)
+		content.WriteString("  " + bar + "\n")
+		content.WriteString(fmt.Sprintf("  Step %d of %d\n", m.setupStep, m.setupTotalSteps))
+		return modalStyle.Width(72).Render(content.String())
+	} else if prompt == PromptManagePackage {
 		var leftCols []string
 		leftCols = append(leftCols, boldStyle.Render("Package:")+" "+accentStyle.Render(pkg.ShortName))
 		leftCols = append(leftCols, mutedStyle.Render("Type:   ")+" "+boldStyle.Render(strings.ToUpper(pkg.Kind)))
@@ -3089,12 +3164,18 @@ func (m *TuiModel) RunSetupTask(adds map[string]string, p *tea.Program) {
 	go func() {
 		desktopJs := filepath.Join(m.workspaceRoot, "packages", "cli", "bin", "desktop.js")
 
+		totalSteps := len(adds) + 2
+		step := 0
+		p.Send(setupProgressMsg{Step: step, Total: totalSteps, Label: "Initializing setup task…"})
+
 		// 1. Process all additions
 		for pkgName, method := range adds {
+			step++
 			shortName := pkgName
 			if idx := strings.LastIndex(pkgName, "/"); idx >= 0 {
 				shortName = pkgName[idx+1:]
 			}
+			p.Send(setupProgressMsg{Step: step, Total: totalSteps, Label: fmt.Sprintf("Installing %s via %s…", shortName, method)})
 
 			args := []string{desktopJs, "add", shortName}
 			if method == "npm" {
@@ -3199,6 +3280,8 @@ func (m *TuiModel) RunSetupTask(adds map[string]string, p *tea.Program) {
 		}
 
 		// 2. Run pnpm install for cleanup/removal sync
+		step++
+		p.Send(setupProgressMsg{Step: step, Total: totalSteps, Label: "Installing dependencies (pnpm install)…"})
 		p.Send(logLineMsg(">>> Running pnpm install (syncing workspace)…"))
 		if err := runProcessAndStreamLogsSilent(m.workspaceRoot, "pnpm", []string{"install"}, p); err != nil {
 			p.Send(taskFinishedMsg{Success: false, Err: err})
@@ -3206,6 +3289,8 @@ func (m *TuiModel) RunSetupTask(adds map[string]string, p *tea.Program) {
 		}
 
 		// 3. Rebuild stubs
+		step++
+		p.Send(setupProgressMsg{Step: step, Total: totalSteps, Label: "Rebuilding stubs (prepare:modules)…"})
 		p.Send(logLineMsg(">>> Rebuilding stubs…"))
 		if err := runProcessAndStreamLogsSilent(m.workspaceRoot, "pnpm", []string{"run", "prepare:modules"}, p); err != nil {
 			p.Send(taskFinishedMsg{Success: false, Err: err})
@@ -3220,6 +3305,7 @@ func (m *TuiModel) RunUpdatePackageTask(pkgName string, shortName string, kind s
 	go func() {
 		p.Send(clearLogsMsg{})
 		p.Send(logLineMsg(fmt.Sprintf(">>> Starting update for %s…", shortName)))
+		p.Send(setupProgressMsg{Step: 1, Total: 3, Label: fmt.Sprintf("Updating %s…", shortName)})
 
 		desktopJs := filepath.Join(m.workspaceRoot, "packages", "cli", "bin", "desktop.js")
 
@@ -3254,6 +3340,7 @@ func (m *TuiModel) RunUpdatePackageTask(pkgName string, shortName string, kind s
 		}
 
 		// Run pnpm install
+		p.Send(setupProgressMsg{Step: 2, Total: 3, Label: "Installing dependencies (pnpm install)…"})
 		p.Send(logLineMsg(">>> Running pnpm install (syncing workspace)…"))
 		if err := runProcessAndStreamLogsSilent(m.workspaceRoot, "pnpm", []string{"install"}, p); err != nil {
 			p.Send(taskFinishedMsg{Success: false, Err: err})
@@ -3261,6 +3348,7 @@ func (m *TuiModel) RunUpdatePackageTask(pkgName string, shortName string, kind s
 		}
 
 		// Rebuild stubs
+		p.Send(setupProgressMsg{Step: 3, Total: 3, Label: "Rebuilding stubs (prepare:modules)…"})
 		p.Send(logLineMsg(">>> Rebuilding stubs…"))
 		if err := runProcessAndStreamLogsSilent(m.workspaceRoot, "pnpm", []string{"run", "prepare:modules"}, p); err != nil {
 			p.Send(taskFinishedMsg{Success: false, Err: err})
