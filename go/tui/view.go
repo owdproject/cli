@@ -370,7 +370,7 @@ func (m *TuiModel) renderCatalogRow(item bridge.CatalogEntry, selected bool, w, 
 	}
 
 	shortName := item.ShortName
-	name := badge + " " + shortName
+	name := badge + "  " + shortName
 
 	version := "—"
 	if item.Version != nil {
