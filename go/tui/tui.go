@@ -262,6 +262,7 @@ type TuiModel struct {
 
 	themeDepResolveChan chan themeDepDecision
 	activeThemeDep      string
+	startupCheckDone    bool
 }
 
 func NewModel(root string) TuiModel {
@@ -283,6 +284,7 @@ func NewModel(root string) TuiModel {
 		pendingTheme:     nil,
 		finalizedAdds:    make(map[string]string),
 		themeDepResolveChan: make(chan themeDepDecision, 1),
+		startupCheckDone:    false,
 	}
 }
 
@@ -429,6 +431,37 @@ func (m TuiModel) hasPendingChanges() bool {
 		return true
 	}
 	return false
+}
+
+func (m *TuiModel) startStartupCheck() tea.Cmd {
+	m.promptQueue = []pendingDecision{}
+	m.promptQueueIndex = 0
+	m.finalizedAdds = make(map[string]string)
+	m.finalizedRemoves = []string{}
+	m.finalizedTheme = nil
+
+	if m.catalog == nil {
+		return nil
+	}
+
+	for _, entry := range m.catalog.Entries {
+		if entry.Installed && !entry.LocalSource {
+			m.promptQueue = append(m.promptQueue, pendingDecision{
+				PkgName:   entry.Name,
+				ShortName: entry.ShortName,
+				Action:    "install",
+				Kind:      entry.Kind,
+				Entry:     entry,
+			})
+		}
+	}
+
+	if len(m.promptQueue) == 0 {
+		m.activePrompt = PromptNone
+		return nil
+	}
+
+	return m.processNextQueueDecision()
 }
 
 func (m *TuiModel) startQueueReview() tea.Cmd {
@@ -907,6 +940,15 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.taskActive = true
 				return m, m.rebootServerCmd()
 			}
+
+			if !m.startupCheckDone && m.catalog != nil {
+				m.startupCheckDone = true
+				cmd := m.startStartupCheck()
+				if cmd != nil {
+					return m, tea.Batch(cmd, m.checkServerStatusCmd())
+				}
+			}
+
 			return m, m.checkServerStatusCmd()
 		}
 
@@ -918,6 +960,16 @@ func (m TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.catalog = msg.Cat
 			m.statusMsg = fmt.Sprintf("Catalog loaded (%s).", msg.Cat.CacheAge)
+
+			if !m.startupCheckDone && m.ctx != nil {
+				m.startupCheckDone = true
+				cmd := m.startStartupCheck()
+				if cmd != nil {
+					m.checkingUpdates = true
+					return m, tea.Batch(cmd, m.checkForUpdatesCmd())
+				}
+			}
+
 			m.checkingUpdates = true
 			return m, m.checkForUpdatesCmd()
 		}
