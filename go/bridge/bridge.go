@@ -127,6 +127,7 @@ func getBridgePath(root string) string {
 // ReadWorkspaceContext runs the node bridge with --read
 func ReadWorkspaceContext(root string) (*WorkspaceContext, error) {
 	cmd := exec.Command("node", getBridgePath(root), "--read")
+	cmd.Dir = root
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -150,6 +151,7 @@ func ReadCatalog(root string, force bool) (*CatalogResponse, error) {
 		args = append(args, "--force")
 	}
 	cmd := exec.Command("node", args...)
+	cmd.Dir = root
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -169,6 +171,7 @@ func ReadCatalog(root string, force bool) (*CatalogResponse, error) {
 // WriteChanges feeds the write payload to the node bridge via stdin
 func WriteChanges(root string, payload *WritePayload) error {
 	cmd := exec.Command("node", getBridgePath(root), "--write")
+	cmd.Dir = root
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

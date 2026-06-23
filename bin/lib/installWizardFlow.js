@@ -440,7 +440,7 @@ export async function runStartupInstallFlow(ctx, { isStartup = false } = {}) {
 
   const merged = mergeInstalled(catalog, config, deps, workspaceRoot)
   const missingAppsModules = merged
-    .filter((item) => item.installed && !item.localSource && item.kind !== 'theme')
+    .filter((item) => item.installed && !item.localSource && !item.inPackageJson && item.kind !== 'theme')
     .map((item) => item.name)
 
   const desiredTheme = ctx.getPendingTheme() ?? config.theme

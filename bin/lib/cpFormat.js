@@ -160,7 +160,7 @@ export function formatCatalogRowPlain(item, ctx = {}) {
 
   // 3.5 DIR Column (4 chars)
   let dirTag = ''
-  const isMissing = item.installed && !item.localSource
+  const isMissing = item.installed && !item.localSource && !item.inPackageJson
   if (isMissing) {
     dirTag = `{red-fg}MISS{/}`
   } else if (item.localSource) {
@@ -321,7 +321,7 @@ export function formatDetailPanel(item, targetDir, colors = DEFAULT_COLORS, widt
     lines.push(`  {${c.muted}-fg}${item.description.slice(0, maxDescLen)}{/}`)
   }
 
-  const isMissing = item.installed && !item.localSource
+  const isMissing = item.installed && !item.localSource && !item.inPackageJson
   if (isMissing) {
     lines.push(`  {red-fg}{bold}⚠ WARNING: Local workspace folder is missing!{/}{/}`)
   }

@@ -468,7 +468,11 @@ export async function runCli(name, argv, options = {}) {
       })
       process.exit(0)
     }
-    runNpmInstall(kind, pkgName, workspaceRoot)
+    try {
+      await runNpmInstall(kind, pkgName, workspaceRoot)
+    } catch (error) {
+      fail(error.message ?? String(error))
+    }
   } else {
     try {
       await runWorkspaceInstall({

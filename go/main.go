@@ -20,8 +20,7 @@ func main() {
 	}
 
 	model := tui.NewModel(root)
-	p = tea.NewProgram(model, tea.WithAltScreen())
-	tui.Program = p
+	p = tea.NewProgram(&model, tea.WithAltScreen())
 
 	finalModel, err := p.Run()
 	if err != nil {
@@ -29,7 +28,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	if m, ok := finalModel.(tui.TuiModel); ok && m.ExitCode != 0 {
+	if m, ok := finalModel.(*tui.TuiModel); ok && m.ExitCode != 0 {
 		os.Exit(m.ExitCode)
 	}
 }

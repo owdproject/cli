@@ -463,16 +463,22 @@ export async function runWorkspaceInstall({
 }
 
 export function runNpmInstall(kind, pkgName, workspaceRoot, stdio = 'inherit') {
-  const nxTarget = KINDS[kind].nx
-  const child = spawn('pnpm', ['nx', 'run', nxTarget, `--name=${pkgName}`], {
-    stdio,
-    shell: true,
-    cwd: workspaceRoot,
+  return new Promise((resolve, reject) => {
+    const nxTarget = KINDS[kind].nx
+    const child = spawn('pnpm', ['nx', 'run', nxTarget, `--name=${pkgName}`], {
+      stdio,
+      shell: true,
+      cwd: workspaceRoot,
+    })
+    child.on('error', reject)
+    child.on('exit', (code) => {
+      if (code === 0) {
+        resolve()
+      } else {
+        reject(new Error(`Installation failed with exit code ${code}`))
+      }
+    })
   })
-  child.on('exit', (code) => {
-    if (stdio === 'inherit') process.exit(code ?? 1)
-  })
-  return child
 }
 
 /** Preview label for TUI list rows */
