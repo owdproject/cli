@@ -278,7 +278,7 @@ func (m *TuiModel) renderCatalogPanel(w, h int, _ bool) string {
 	}
 
 	// Calculate pagination heights
-	visibleRows := h - 5 // height minus tabs, spaces, detail pane
+	visibleRows := h - 6 // height minus tabs, spaces, detail pane separator and details row
 	if visibleRows < 1 {
 		visibleRows = 1
 	}
@@ -317,7 +317,7 @@ func (m *TuiModel) renderCatalogPanel(w, h int, _ bool) string {
 	}
 
 	// Pad empty space to keep layout stable
-	for len(lines) < h-3 {
+	for len(lines) < h-2 {
 		lines = append(lines, "")
 	}
 
@@ -634,7 +634,7 @@ func (m *TuiModel) renderStatusBar(w int) string {
 	)
 	line2 := barStyle.Width(w).Render(strings.Join(shortcutParts, sep))
 
-	return "\n\n" + line1 + "\n" + line2 + "\n"
+	return "\n\n\n" + line1 + "\n" + line2
 }
 
 func (m *TuiModel) getActiveItems() []bridge.CatalogEntry {
