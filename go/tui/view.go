@@ -392,14 +392,7 @@ func (m *TuiModel) renderCatalogRow(item bridge.CatalogEntry, selected bool, w, 
 	}
 
 	// ── SRC (npm / git / dev) ────────────────────────────────────
-	source := "npm"
-	if item.LocalSource {
-		if m.localGitDirs[item.ShortName] {
-			source = "git"
-		} else {
-			source = "dev"
-		}
-	}
+	source := catalogSourceLabel(item, m.localGitDirs)
 
 	// ── SYNC column: git changes + update indicators ─────────────
 	var syncParts []string

@@ -794,6 +794,21 @@ func kv(label, value string) string {
 // keep rand used (for future sparkline noise simulation)
 var _ = rand.Float64
 
+// catalogSourceLabel returns the SRC column value for a catalog row.
+// It reflects only a known, materialized source — not an assumed install method.
+func catalogSourceLabel(item bridge.CatalogEntry, localGitDirs map[string]bool) string {
+	if item.LocalSource {
+		if localGitDirs[item.ShortName] {
+			return "git"
+		}
+		return "dev"
+	}
+	if item.Installed && item.InPackageJson {
+		return "npm"
+	}
+	return "—"
+}
+
 func (m *TuiModel) getInstallMethods(pkg *bridge.CatalogEntry) []InstallMethod {
 	var methods []InstallMethod
 
