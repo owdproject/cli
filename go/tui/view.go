@@ -24,7 +24,7 @@ func (m *TuiModel) View() string {
 	}
 	h = h - 1 // Safety margin of 1 line at the bottom to prevent scrolling
 
-	showLogs := (m.serverRunning || m.activeTask != TaskNone) && w >= 120
+	showRightPanel := (m.serverRunning || m.activeTask != TaskNone) && w >= 120
 
 	// Heights
 	topH := 9    // top panels row (with borders = 9 rows)
@@ -37,7 +37,7 @@ func (m *TuiModel) View() string {
 
 	// Column widths (including borders each panel takes +2 cols)
 	var leftW, midW, rightW int
-	if showLogs {
+	if showRightPanel {
 		// 40% | 28% | 32%  — roughly matching original blessed layout
 		rightW = w * 32 / 100
 		leftW  = w * 40 / 100
@@ -57,9 +57,15 @@ func (m *TuiModel) View() string {
 
 	var topRow, mainContent, catalogPanel string
 
-	if showLogs {
+	if showRightPanel {
 		catW := leftW + midW
+		var rightPanel string
 		logContent := m.renderLogsPanel(rightW-4, h-barH-2)
+		rightPanelTitle := "Logs"
+		if m.activeTask == TaskSetup || m.activeTask == TaskWipe {
+			rightPanelTitle = "Setup"
+		}
+		rightPanel = drawPanel(rightW, h-barH, rightPanelTitle, logContent, false)
 
 		// Top 2-panel row (left + mid)
 		topTwoPanels := lipgloss.JoinHorizontal(lipgloss.Top,
@@ -68,7 +74,7 @@ func (m *TuiModel) View() string {
 		)
 
 		// Catalog panel — always rendered; modal overlaid on top if active
-		catalogContent := m.renderCatalogPanel(catW-4, catalogH-2, showLogs)
+		catalogContent := m.renderCatalogPanel(catW-4, catalogH-2, showRightPanel)
 		catalogPanel = drawPanel(catW-1, catalogH, "Catalog", catalogContent, true)
 		promptToShow := m.activePrompt
 		if (m.activeTask == TaskSetup || m.activeTask == TaskWipe) && (promptToShow == PromptNone || promptToShow == PromptUninstallConfirm || promptToShow == PromptInstallMethod || promptToShow == PromptWipeWorkspaceConfirm) {
@@ -83,10 +89,7 @@ func (m *TuiModel) View() string {
 		// Left main block = top panels + catalog stacked
 		leftMain := lipgloss.JoinVertical(lipgloss.Left, topTwoPanels, catalogPanel)
 
-		// Right logs panel, spans full height
-		logsPanel := drawPanel(rightW, h-barH, "Logs", logContent, false)
-
-		topRow = lipgloss.JoinHorizontal(lipgloss.Top, leftMain, logsPanel)
+		topRow = lipgloss.JoinHorizontal(lipgloss.Top, leftMain, rightPanel)
 		mainContent = topRow
 	} else {
 		// No logs: top row = left + right panels side by side
@@ -96,7 +99,7 @@ func (m *TuiModel) View() string {
 		)
 
 		// Catalog full width — always rendered; modal overlaid on top if active
-		catalogContent := m.renderCatalogPanel(w-4, catalogH-2, showLogs)
+		catalogContent := m.renderCatalogPanel(w-4, catalogH-2, showRightPanel)
 		catalogPanel = drawPanel(w, catalogH, "Catalog", catalogContent, true)
 		promptToShow := m.activePrompt
 		if (m.activeTask == TaskSetup || m.activeTask == TaskWipe) && (promptToShow == PromptNone || promptToShow == PromptUninstallConfirm || promptToShow == PromptInstallMethod || promptToShow == PromptWipeWorkspaceConfirm) {
@@ -198,12 +201,10 @@ func (m *TuiModel) renderClientPanel(w, h int) string {
 	lines = append(lines, mutedStyle.Render("  Source     ")+boldStyle.Render(source))
 
 	// Git Branch
-	branch := gitBranch(m.workspaceRoot)
-	lines = append(lines, mutedStyle.Render("  Git Branch ")+boldStyle.Render(branch))
+	lines = append(lines, mutedStyle.Render("  Git Branch ")+boldStyle.Render(m.workspaceBranch))
 
 	// Workspace Changes
-	changes := gitChanges(m.workspaceRoot)
-	lines = append(lines, mutedStyle.Render("  Changes    ")+changes)
+	lines = append(lines, mutedStyle.Render("  Changes    ")+m.workspaceChanges)
 
 	return strings.Join(lines, "\n")
 }
@@ -518,6 +519,30 @@ func (m *TuiModel) renderLogsPanel(w, h int) string {
 
 	lines = append(lines, "")
 
+	// Setup progress header — shown during active setup/wipe tasks
+	if (m.activeTask == TaskSetup || m.activeTask == TaskWipe) && m.setupTotalSteps > 0 {
+		// Progress bar
+		barWidth := w - 6
+		if barWidth < 4 {
+			barWidth = 4
+		}
+		filled := 0
+		if m.setupTotalSteps > 0 {
+			filled = (m.setupStep * barWidth) / m.setupTotalSteps
+		}
+		if filled > barWidth {
+			filled = barWidth
+		}
+		progBar := "[" + strings.Repeat("█", filled) + strings.Repeat("░", barWidth-filled) + "]"
+		progPct := 0
+		if m.setupTotalSteps > 0 {
+			progPct = (m.setupStep * 100) / m.setupTotalSteps
+		}
+		lines = append(lines, "  "+accentStyle.Render(fmt.Sprintf("%s %d%%", progBar, progPct)))
+		lines = append(lines, "  "+mutedStyle.Render(m.setupLabel))
+		lines = append(lines, "")
+	}
+
 	// Server URLs
 	if m.serverRunning {
 		dot := accentStyle.Render("●")
@@ -561,9 +586,62 @@ func (m *TuiModel) renderLogsPanel(w, h int) string {
 	if len(m.logLines) == 0 {
 		if m.serverRunning && m.isServerCmdNil() {
 			lines = append(lines, mutedStyle.Render("  Logs unavailable (external server)"))
+		} else if m.activeTask != TaskNone {
+			// Spinner while waiting for first log line during an active task
+			spinners := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+			spin := spinners[m.tickCount%len(spinners)]
+			lines = append(lines, mutedStyle.Render("  "+spin+" Running…"))
 		} else {
 			lines = append(lines, mutedStyle.Render("  Waiting for logs…"))
 		}
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+func (m *TuiModel) renderInitializingPanel(w, h int) string {
+	var lines []string
+
+	lines = append(lines, "")
+
+	// Vertical spacing to center content roughly
+	paddingTop := (h - 6) / 2
+	if paddingTop < 1 {
+		paddingTop = 1
+	}
+	for i := 0; i < paddingTop; i++ {
+		lines = append(lines, "")
+	}
+
+	// Spinner frames (braille pattern makes a beautiful spinner)
+	spinnerFrames := []string{
+		"⢹", "⢺", "⢽", "⢾", "⡿", "⢿", "⣻", "⣽", "⣾", "⣿",
+		"⣇", "⣆", "⣃", "⣅", "⣄", "⣠", "⣡", "⣢", "⣣", "⣤",
+	}
+	frame := spinnerFrames[m.tickCount%len(spinnerFrames)]
+	spin := spinnerStyle.Render(frame)
+
+	lines = append(lines, "  "+spin+"  "+accentStyle.Render("Initializing OWD…"))
+	lines = append(lines, "")
+
+	taskLabel := m.statusMsg
+	if m.setupLabel != "" {
+		taskLabel = m.setupLabel
+	}
+	// Trim/truncate label to fit
+	taskLabel = truncate(taskLabel, w-6)
+	lines = append(lines, "     "+boldStyle.Render(taskLabel))
+
+	if m.setupTotalSteps > 0 {
+		lines = append(lines, "")
+		bar := renderProgressBar(m.setupStep, m.setupTotalSteps, w-10)
+		lines = append(lines, "     "+bar)
+		lines = append(lines, fmt.Sprintf("     Step %d of %d", m.setupStep, m.setupTotalSteps))
+	}
+
+	// Pad the rest of the lines
+	for len(lines) < h {
+		lines = append(lines, "")
 	}
 
 	return strings.Join(lines, "\n")
@@ -593,6 +671,13 @@ func (m *TuiModel) renderStatusBar(w int) string {
 		}
 	}
 
+	var serverShortcut string
+	if m.serverRunning {
+		serverShortcut = barKeyStyle.Render("x") + barTextStyle.Render(" stop server")
+	} else {
+		serverShortcut = barKeyStyle.Render("d") + barTextStyle.Render(" start server")
+	}
+
 	line1Parts := []string{
 		statusIcon + barKeyStyle.Render("Select packages") + barTextStyle.Render(" · "),
 	}
@@ -600,15 +685,9 @@ func (m *TuiModel) renderStatusBar(w int) string {
 		line1Parts = append(line1Parts, barKeyStyle.Render("s")+barTextStyle.Render(" save changes · "))
 	}
 	line1Parts = append(line1Parts,
+		serverShortcut+barTextStyle.Render(" · "),
 		barKeyStyle.Render("g")+barTextStyle.Render(" settings"),
 	)
-
-	var serverShortcut string
-	if m.serverRunning {
-		serverShortcut = barKeyStyle.Render("x") + barTextStyle.Render(" stop server")
-	} else {
-		serverShortcut = barKeyStyle.Render("d") + barTextStyle.Render(" start server")
-	}
 
 	if m.activeTask != TaskNone {
 		spinFrames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
@@ -644,7 +723,6 @@ func (m *TuiModel) renderStatusBar(w int) string {
 	}
 
 	shortcutParts = append(shortcutParts,
-		serverShortcut,
 		barKeyStyle.Render("r")+barTextStyle.Render(" refresh"),
 		barKeyStyle.Render("n")+barTextStyle.Render(" new"),
 		barKeyStyle.Render("q")+barTextStyle.Render(" quit"),

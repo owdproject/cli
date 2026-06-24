@@ -302,31 +302,29 @@ func (m *TuiModel) renderSettingsModal() string {
 
 	// 3. Trusted Orgs (Authors)
 	orgsLabel := "3. Trusted Orgs"
-	var orgsVal string
-	if m.ctx != nil && len(m.ctx.Settings.GithubOrgs) > 0 {
-		orgsVal = strings.Join(m.ctx.Settings.GithubOrgs, ", ")
-	} else {
-		orgsVal = "owdproject, atproto-os" // default/fallback
-	}
-	orgsValText := boldStyle.Render(orgsVal) + "   " + subtleStyle.Render("(Read-only. Edit settings.json)")
+	var orgsValText string
 	if m.settingsSel == 2 {
+		orgsValText = m.settingsOrgsInput.View()
 		content.WriteString(accentStyle.Render("▶ ") + boldStyle.Render(orgsLabel) + "\n   " + orgsValText + "\n")
 	} else {
+		orgsValText = subtleStyle.Render(m.settingsOrgsInput.Value())
 		content.WriteString("  " + boldStyle.Render(orgsLabel) + "\n   " + orgsValText + "\n")
 	}
 	content.WriteString("\n")
 
 	// 4. GitHub User
 	ghLabel := "4. GitHub User"
-	ghUser := "(not set)"
-	if m.ctx != nil && m.ctx.Settings.GithubUser != nil && *m.ctx.Settings.GithubUser != "" {
-		ghUser = *m.ctx.Settings.GithubUser
-	}
-	ghVal := boldStyle.Render(ghUser) + "   " + subtleStyle.Render("(Read-only. Edit settings.json)")
+	var ghValText string
 	if m.settingsSel == 3 {
-		content.WriteString(accentStyle.Render("▶ ") + boldStyle.Render(ghLabel) + "\n   " + ghVal + "\n")
+		ghValText = m.settingsUserInput.View()
+		content.WriteString(accentStyle.Render("▶ ") + boldStyle.Render(ghLabel) + "\n   " + ghValText + "\n")
 	} else {
-		content.WriteString("  " + boldStyle.Render(ghLabel) + "\n   " + ghVal + "\n")
+		val := m.settingsUserInput.Value()
+		if val == "" {
+			val = "(not set)"
+		}
+		ghValText = subtleStyle.Render(val)
+		content.WriteString("  " + boldStyle.Render(ghLabel) + "\n   " + ghValText + "\n")
 	}
 	content.WriteString("\n")
 

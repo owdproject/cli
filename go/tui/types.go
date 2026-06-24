@@ -8,6 +8,7 @@ import (
 
 	"owd-cli/bridge"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -81,6 +82,11 @@ type setupProgressMsg struct {
 	Step  int
 	Total int
 	Label string
+}
+
+type workspaceGitStatusMsg struct {
+	Branch  string
+	Changes string
 }
 
 type InstallMethod struct {
@@ -190,6 +196,8 @@ type TuiModel struct {
 	settingsSel         int
 	settingsInstallMode string
 	settingsCatalogSort string
+	settingsOrgsInput   textinput.Model
+	settingsUserInput   textinput.Model
 
 	// Server status
 	serverRunning   bool
@@ -220,7 +228,10 @@ type TuiModel struct {
 
 	activeThemeDep  string
 	startupCheckDone bool
+	startServerAfterSetup bool
 	setupStep        int
 	setupTotalSteps  int
 	setupLabel       string
+	workspaceBranch  string
+	workspaceChanges string
 }

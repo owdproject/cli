@@ -53,9 +53,34 @@ func (m *TuiModel) handlePromptKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *TuiModel) handleSettingsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
+	keyStr := msg.String()
+	isInputFocused := m.settingsSel == 2 || m.settingsSel == 3
+
+	if isInputFocused {
+		switch keyStr {
+		case "esc":
+			m.activePrompt = PromptNone
+			m.settingsOrgsInput.Blur()
+			m.settingsUserInput.Blur()
+			return m, nil
+		case "up", "down", "enter":
+			// Intercept and fall through to navigation/actions below
+		default:
+			var cmd tea.Cmd
+			if m.settingsSel == 2 {
+				m.settingsOrgsInput, cmd = m.settingsOrgsInput.Update(msg)
+			} else {
+				m.settingsUserInput, cmd = m.settingsUserInput.Update(msg)
+			}
+			return m, cmd
+		}
+	}
+
+	switch keyStr {
 	case "esc", "q":
 		m.activePrompt = PromptNone
+		m.settingsOrgsInput.Blur()
+		m.settingsUserInput.Blur()
 		return m, nil
 	case "up", "k":
 		if m.settingsSel >= SettingsFieldCount {
@@ -63,11 +88,94 @@ func (m *TuiModel) handleSettingsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		} else if m.settingsSel > 0 {
 			m.settingsSel--
 		}
-	case "down", "j":
-		if m.settingsSel == SettingsFieldCount-1 {
-			m.settingsSel = SettingsFieldCount
-		} else if m.settingsSel < SettingsFieldCount-1 {
-			m.settingsSel++
+		m.updateSettingsFocus()
+	case "down", "j", "enter":
+		if keyStr == "enter" && isInputFocused {
+			m.settingsSel = 5 // Jump directly to SAVE button
+			m.updateSettingsFocus()
+			return m, nil
+		}
+
+		if keyStr == "down" || keyStr == "j" {
+			if m.settingsSel == SettingsFieldCount-1 {
+				m.settingsSel = SettingsFieldCount
+			} else if m.settingsSel < SettingsFieldCount-1 {
+				m.settingsSel++
+			}
+			m.updateSettingsFocus()
+		} else if keyStr == "enter" {
+			switch m.settingsSel {
+			case 0: // Install Mode
+				if m.settingsInstallMode == "npm" {
+					m.settingsInstallMode = "workspace"
+				} else {
+					m.settingsInstallMode = "npm"
+				}
+			case 1: // Catalog Sort
+				modes := []string{"updated", "name", "stars", "installed"}
+				idx := 0
+				for i, mth := range modes {
+					if mth == m.settingsCatalogSort {
+						idx = (i + 1) % len(modes)
+						break
+					}
+				}
+				m.settingsCatalogSort = modes[idx]
+			case 2: // Trusted Orgs
+				// Handled by textinput
+			case 3: // GitHub User
+				// Handled by textinput
+			case 4: // Reset Workspace
+				m.activePrompt = PromptWipeWorkspaceConfirm
+				m.promptSel = 1 // default to No
+			case 5: // Save
+				m.activePrompt = PromptNone
+				m.settingsOrgsInput.Blur()
+				m.settingsUserInput.Blur()
+				if m.ctx != nil {
+					settings := m.ctx.Settings
+					settings.InstallMode = m.settingsInstallMode
+					settings.CatalogSort = m.settingsCatalogSort
+
+					// Parse Trusted Orgs (GithubOrgs) from comma-separated list
+					rawOrgs := m.settingsOrgsInput.Value()
+					var orgs []string
+					for _, part := range strings.Split(rawOrgs, ",") {
+						trimmed := strings.TrimSpace(part)
+						if trimmed != "" {
+							orgs = append(orgs, trimmed)
+						}
+					}
+					settings.GithubOrgs = orgs
+
+					// Parse GitHub User (GithubUser)
+					ghUserVal := m.settingsUserInput.Value()
+					if ghUserVal == "" {
+						settings.GithubUser = nil
+					} else {
+						settings.GithubUser = &ghUserVal
+					}
+
+					payload := &bridge.WritePayload{
+						Settings: &settings,
+					}
+					m.statusMsg = "Saving settings…"
+					m.addLog(">>> Saving settings configuration…")
+					if err := bridge.WriteChanges(m.workspaceRoot, payload); err != nil {
+						m.statusMsg = fmt.Sprintf("Save failed: %v", err)
+						m.addLog(fmt.Sprintf(">>> Save settings failed: %v", err))
+					} else {
+						m.statusMsg = "Settings saved successfully."
+						m.addLog(">>> Settings saved successfully.")
+					}
+				}
+				m.loading = true
+				return m, tea.Batch(m.loadContextCmd(), m.loadCatalogCmd(false))
+			case 6: // Cancel
+				m.activePrompt = PromptNone
+				m.settingsOrgsInput.Blur()
+				m.settingsUserInput.Blur()
+			}
 		}
 	case "left", "h":
 		if m.settingsSel == SettingsFieldCount+1 {
@@ -76,55 +184,6 @@ func (m *TuiModel) handleSettingsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "right", "l":
 		if m.settingsSel == SettingsFieldCount {
 			m.settingsSel = SettingsFieldCount + 1
-		}
-	case "enter":
-		switch m.settingsSel {
-		case 0: // Install Mode
-			if m.settingsInstallMode == "npm" {
-				m.settingsInstallMode = "workspace"
-			} else {
-				m.settingsInstallMode = "npm"
-			}
-		case 1: // Catalog Sort
-			modes := []string{"updated", "name", "stars", "installed"}
-			idx := 0
-			for i, mth := range modes {
-				if mth == m.settingsCatalogSort {
-					idx = (i + 1) % len(modes)
-					break
-				}
-			}
-			m.settingsCatalogSort = modes[idx]
-		case 2: // Trusted Orgs
-			m.addLog(">>> To configure Trusted Orgs, modify .desktop/settings.json (githubOrgs field).")
-		case 3: // GitHub User
-			m.addLog(">>> To configure GitHub User, modify .desktop/settings.json or use OWD_GITHUB_USER env var.")
-		case 4: // Reset Workspace
-			m.activePrompt = PromptWipeWorkspaceConfirm
-			m.promptSel = 1 // default to No
-		case 5: // Save
-			m.activePrompt = PromptNone
-			if m.ctx != nil {
-				settings := m.ctx.Settings
-				settings.InstallMode = m.settingsInstallMode
-				settings.CatalogSort = m.settingsCatalogSort
-				payload := &bridge.WritePayload{
-					Settings: &settings,
-				}
-				m.statusMsg = "Saving settings…"
-				m.addLog(">>> Saving settings configuration…")
-				if err := bridge.WriteChanges(m.workspaceRoot, payload); err != nil {
-					m.statusMsg = fmt.Sprintf("Save failed: %v", err)
-					m.addLog(fmt.Sprintf(">>> Save settings failed: %v", err))
-				} else {
-					m.statusMsg = "Settings saved successfully."
-					m.addLog(">>> Settings saved successfully.")
-				}
-			}
-			m.loading = true
-			return m, tea.Batch(m.loadContextCmd(), m.loadCatalogCmd(false))
-		case 6: // Cancel
-			m.activePrompt = PromptNone
 		}
 	}
 	return m, nil
@@ -181,6 +240,7 @@ func (m *TuiModel) handleUninstallConfirmKeys(msg tea.KeyMsg) (tea.Model, tea.Cm
 		m.promptPkg = nil
 		m.promptQueue = nil
 		m.promptQueueIndex = 0
+		m.startServerAfterSetup = false
 		return m, nil
 	case "left", "h", "up", "k":
 		m.promptSel = 0
@@ -220,6 +280,7 @@ func (m *TuiModel) handleInstallMethodKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) 
 		m.promptPkg = nil
 		m.promptQueue = nil
 		m.promptQueueIndex = 0
+		m.startServerAfterSetup = false
 		return m, nil
 	case "up", "k":
 		if m.promptSel > 0 {
@@ -333,7 +394,7 @@ func (m *TuiModel) triggerUninstall(pkg *bridge.CatalogEntry) (tea.Model, tea.Cm
 		return m, nil
 	}
 	m.RunSetupTask(make(map[string]string))
-	return m, nil
+	return m, m.listenToChannel()
 }
 
 func (m *TuiModel) triggerInstall(pkg *bridge.CatalogEntry, method string) (tea.Model, tea.Cmd) {
@@ -388,7 +449,7 @@ func (m *TuiModel) triggerInstall(pkg *bridge.CatalogEntry, method string) (tea.
 		return m, nil
 	}
 	m.RunSetupTask(map[string]string{pkg.Name: method})
-	return m, nil
+	return m, m.listenToChannel()
 }
 
 func (m *TuiModel) triggerForceReinstall(pkg *bridge.CatalogEntry) (tea.Model, tea.Cmd) {
@@ -432,7 +493,7 @@ func (m *TuiModel) triggerForceReinstall(pkg *bridge.CatalogEntry) (tea.Model, t
 	}
 
 	m.RunSetupTask(map[string]string{pkg.Name: method})
-	return m, nil
+	return m, m.listenToChannel()
 }
 
 func (m *TuiModel) triggerUpdate(pkg *bridge.CatalogEntry) (tea.Model, tea.Cmd) {
@@ -475,7 +536,7 @@ func (m *TuiModel) triggerUpdate(pkg *bridge.CatalogEntry) (tea.Model, tea.Cmd) 
 		err := runtime.runProcessAndStreamLogsSilent(workspaceRoot, "pnpm", []string{"run", "prepare:modules"})
 		runtime.msgChan <- taskFinishedMsg{Success: err == nil, Err: err}
 	}()
-	return m, nil
+	return m, m.listenToChannel()
 }
 
 // ─────────────────────────────────────────────
@@ -587,7 +648,8 @@ func (m *TuiModel) startStartupCheck() tea.Cmd {
 func (m *TuiModel) processNextQueueDecision() tea.Cmd {
 	if m.promptQueueIndex >= len(m.promptQueue) {
 		m.activePrompt = PromptNone
-		return m.applyQueueChangesCmd()
+		// IMPORTANT: batch with listenToChannel so the setup task's messages are consumed
+		return tea.Batch(m.applyQueueChangesCmd(), m.listenToChannel())
 	}
 
 	dec := m.promptQueue[m.promptQueueIndex]
@@ -760,15 +822,16 @@ func (m *TuiModel) applyQueueChangesCmd() tea.Cmd {
 			return taskFinishedMsg{Success: false, Err: err}
 		}
 
+		m.runtime.msgChan <- logLineMsg(">>> Workspace changes written. Starting setup…")
 		m.RunSetupTask(finalAdds)
-		return logLineMsg(">>> Workspace changes written. Running setup task…")
+		return nil
 	}
 }
 
 func (m *TuiModel) runWipeWorkspaceCmd() tea.Cmd {
 	return func() tea.Msg {
 		m.RunWipeWorkspaceTask()
-		return nil
+		return logLineMsg(">>> Wipe workspace task started…")
 	}
 }
 
@@ -911,4 +974,22 @@ func (m *TuiModel) startQueueReview() tea.Cmd {
 	}
 
 	return m.processNextQueueDecision()
+}
+
+func (m *TuiModel) updateSettingsFocus() {
+	if m.activePrompt == PromptSettings {
+		if m.settingsSel == 2 {
+			m.settingsOrgsInput.Focus()
+			m.settingsUserInput.Blur()
+		} else if m.settingsSel == 3 {
+			m.settingsUserInput.Focus()
+			m.settingsOrgsInput.Blur()
+		} else {
+			m.settingsOrgsInput.Blur()
+			m.settingsUserInput.Blur()
+		}
+	} else {
+		m.settingsOrgsInput.Blur()
+		m.settingsUserInput.Blur()
+	}
 }

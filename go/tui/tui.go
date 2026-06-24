@@ -11,6 +11,7 @@ import (
 
 	"owd-cli/bridge"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -34,13 +35,16 @@ func NewModel(root string) TuiModel {
 		pendingTheme:     nil,
 		finalizedAdds:    make(map[string]string),
 		runtime: &RuntimeState{
-			msgChan: make(chan tea.Msg, 100),
+			msgChan: make(chan tea.Msg, 500),
 		},
 		startupCheckDone:    false,
+		startServerAfterSetup: false,
 		setupStep:           0,
 		setupTotalSteps:     0,
 		setupLabel:          "",
 		activeTask:          TaskNone,
+		workspaceBranch:     "—",
+		workspaceChanges:    "clean",
 	}
 }
 
@@ -55,6 +59,7 @@ func (m *TuiModel) Init() tea.Cmd {
 		m.loadContextCmd(),
 		m.loadCatalogCmd(false),
 		m.checkServerStatusCmd(),
+		m.updateWorkspaceGitStatusCmd(),
 		m.listenToChannel(),
 		tickCmd(),
 	)
@@ -131,6 +136,14 @@ func (m *TuiModel) checkServerStatusCmd() tea.Cmd {
 	}
 }
 
+func (m *TuiModel) updateWorkspaceGitStatusCmd() tea.Cmd {
+	return func() tea.Msg {
+		branch := gitBranch(m.workspaceRoot)
+		changes := gitChanges(m.workspaceRoot)
+		return workspaceGitStatusMsg{Branch: branch, Changes: changes}
+	}
+}
+
 func (m *TuiModel) hasPendingChanges() bool {
 	if len(m.pendingPackages) > 0 {
 		return true
@@ -185,7 +198,7 @@ func (m *TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Every ~15s: fast local git status check (no network)
 		if m.tickCount%100 == 0 && !m.loading && m.activeTask == TaskNone && !m.checkingUpdates {
 			m.checkingUpdates = true
-			cmds = append(cmds, m.checkLocalChangesCmd())
+			cmds = append(cmds, m.checkLocalChangesCmd(), m.updateWorkspaceGitStatusCmd())
 		}
 
 		// Every ~5min: slow remote check (git behind without fetch + npm versions)
@@ -257,7 +270,8 @@ func (m *TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "d":
 			if !m.serverRunning && m.activeTask == TaskNone {
 				cmd := m.startStartupCheck()
-				if cmd != nil {
+				if m.activePrompt != PromptNone || cmd != nil {
+					m.startServerAfterSetup = true
 					return m, cmd
 				}
 
@@ -327,6 +341,29 @@ func (m *TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.settingsCatalogSort = m.ctx.Settings.CatalogSort
 				m.settingsSel = 0
 				m.activePrompt = PromptSettings
+
+				// Initialize text inputs
+				tiUser := textinput.New()
+				tiUser.Placeholder = "github_user"
+				tiUser.CharLimit = 64
+				tiUser.Width = 30
+				if m.ctx.Settings.GithubUser != nil {
+					tiUser.SetValue(*m.ctx.Settings.GithubUser)
+				}
+				m.settingsUserInput = tiUser
+
+				tiOrgs := textinput.New()
+				tiOrgs.Placeholder = "org1, org2"
+				tiOrgs.CharLimit = 256
+				tiOrgs.Width = 40
+				if len(m.ctx.Settings.GithubOrgs) > 0 {
+					tiOrgs.SetValue(strings.Join(m.ctx.Settings.GithubOrgs, ", "))
+				} else {
+					tiOrgs.SetValue("owdproject, atproto-os")
+				}
+				m.settingsOrgsInput = tiOrgs
+
+				m.updateSettingsFocus()
 			}
 		case "n":
 			m.ExitCode = 10
@@ -451,11 +488,18 @@ func (m *TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Success {
 			m.statusMsg = "Task completed."
 			m.addLog(">>> Task completed successfully.")
+			if m.startServerAfterSetup {
+				m.startServerAfterSetup = false
+				m.statusMsg = "Starting dev server…"
+				m.activeTask = TaskServe
+				m.RunServeTask()
+			}
 		} else {
 			m.statusMsg = fmt.Sprintf("Task failed: %v", msg.Err)
 			m.addLog(fmt.Sprintf(">>> Task failed: %v", msg.Err))
+			m.startServerAfterSetup = false
 		}
-		return m, tea.Batch(m.loadContextCmd(), m.loadCatalogCmd(false), m.listenToChannel())
+		return m, tea.Batch(m.loadContextCmd(), m.loadCatalogCmd(false), m.updateWorkspaceGitStatusCmd(), m.listenToChannel())
 
 	case serverStatusMsg:
 		m.serverRunning = msg.Running
@@ -468,6 +512,10 @@ func (m *TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.statusMsg = "Dev server running."
 		}
 		return m, m.listenToChannel()
+	case workspaceGitStatusMsg:
+		m.workspaceBranch = msg.Branch
+		m.workspaceChanges = msg.Changes
+		return m, nil
 	}
 
 	return m, nil

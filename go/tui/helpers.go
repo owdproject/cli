@@ -128,6 +128,108 @@ func getThemeDependencies(workspaceRoot, themeShortName string) ([]string, error
 	return deps, nil
 }
 
+// getOwdDepsLocal reads package.json for any OWD package (app/module/theme) from the local filesystem.
+// Returns all @owdproject/* dependencies whose shortname starts with "module-" or "kit-".
+// Checks multiple locations: workspace subdirs + node_modules.
+func getOwdDepsLocal(workspaceRoot, shortName, kind string) ([]string, bool) {
+	kindDir := ""
+	switch kind {
+	case "app":
+		kindDir = "apps"
+	case "module":
+		kindDir = "packages"
+	case "theme":
+		kindDir = "themes"
+	}
+
+	var pathsToCheck []string
+	if kindDir != "" {
+		pathsToCheck = append(pathsToCheck, filepath.Join(workspaceRoot, kindDir, shortName, "package.json"))
+	}
+	pathsToCheck = append(pathsToCheck,
+		filepath.Join(workspaceRoot, "node_modules", "@owdproject", shortName, "package.json"),
+		filepath.Join(workspaceRoot, "desktop", "node_modules", "@owdproject", shortName, "package.json"),
+	)
+
+	for _, p := range pathsToCheck {
+		data, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		var pkg struct {
+			Dependencies    map[string]string `json:"dependencies"`
+			DevDependencies map[string]string `json:"devDependencies"`
+		}
+		if err := json.Unmarshal(data, &pkg); err != nil {
+			continue
+		}
+		var deps []string
+		seen := make(map[string]bool)
+		allDeps := make(map[string]string)
+		for k, v := range pkg.Dependencies {
+			allDeps[k] = v
+		}
+		for k, v := range pkg.DevDependencies {
+			allDeps[k] = v
+		}
+		for name := range allDeps {
+			if !strings.HasPrefix(name, "@owdproject/") || seen[name] {
+				continue
+			}
+			short := name[strings.LastIndex(name, "/")+1:]
+			if strings.HasPrefix(short, "module-") || strings.HasPrefix(short, "kit-") {
+				deps = append(deps, name)
+				seen[name] = true
+			}
+		}
+		return deps, true
+	}
+	return nil, false
+}
+
+// getOwdDepsFromNpm fetches package.json from npm registry for an @owdproject package
+// and returns @owdproject/* deps whose shortname starts with "module-" or "kit-".
+func getOwdDepsFromNpm(pkgName string) ([]string, error) {
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Get(fmt.Sprintf("https://registry.npmjs.org/%s/latest", url.PathEscape(pkgName)))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+	var data struct {
+		Dependencies    map[string]string `json:"dependencies"`
+		DevDependencies map[string]string `json:"devDependencies"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+		return nil, err
+	}
+	var deps []string
+	seen := make(map[string]bool)
+	allDeps := make(map[string]string)
+	for k, v := range data.Dependencies {
+		allDeps[k] = v
+	}
+	for k, v := range data.DevDependencies {
+		allDeps[k] = v
+	}
+	for name := range allDeps {
+		if !strings.HasPrefix(name, "@owdproject/") || seen[name] {
+			continue
+		}
+		short := name[strings.LastIndex(name, "/")+1:]
+		if strings.HasPrefix(short, "module-") || strings.HasPrefix(short, "kit-") {
+			deps = append(deps, name)
+			seen[name] = true
+		}
+	}
+	return deps, nil
+}
+
+
+
 func wipeDirectory(dir string, preserve map[string]bool) error {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
