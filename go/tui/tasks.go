@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,126 +19,68 @@ import (
 // Background tasks
 // ─────────────────────────────────────────────
 
-func (r *RuntimeState) runProcessAndStreamLogs(root, command string, args []string) {
+type ProcessResult struct {
+	ExitCode int
+	Err      error
+}
+
+func (r *RuntimeState) runProcessStream(cwd, command string, args []string) ProcessResult {
+	cmdLine := command + " " + strings.Join(args, " ")
+	r.msgChan <- logLineMsg("ℹ " + cmdLine)
+
 	cmd := exec.Command(command, args...)
-	cmd.Dir = root
+	cmd.Dir = cwd
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		r.msgChan <- logLineMsg(fmt.Sprintf("✗ Failed to pipe stdout: %v", err))
-		r.msgChan <- taskFinishedMsg{Success: false, Err: err}
-		return
+		r.msgChan <- logLineMsg(fmt.Sprintf("✖ Failed to pipe stdout: %v", err))
+		return ProcessResult{ExitCode: 1, Err: err}
 	}
 	cmd.Stderr = cmd.Stdout
 
 	if err := cmd.Start(); err != nil {
-		r.msgChan <- logLineMsg(fmt.Sprintf("✗ Failed to start process: %v", err))
-		r.msgChan <- taskFinishedMsg{Success: false, Err: err}
-		return
+		r.msgChan <- logLineMsg(fmt.Sprintf("✖ Failed to start process: %v", err))
+		return ProcessResult{ExitCode: 1, Err: err}
 	}
 
 	reader := bufio.NewReader(stdout)
 	for {
 		line, err := reader.ReadString('\n')
 		if err != nil {
-			if err != io.EOF {
-				// ignore partial read errors
-			}
 			break
 		}
 		r.msgChan <- logLineMsg(strings.TrimRight(line, "\r\n"))
 	}
 
 	err = cmd.Wait()
+	exitCode := 0
 	if err != nil {
-		r.msgChan <- logLineMsg(fmt.Sprintf("✗ Command failed: %v", err))
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			exitCode = exitErr.ExitCode()
+		} else {
+			exitCode = 1
+		}
+		r.msgChan <- logLineMsg(fmt.Sprintf("✖ Command failed (exit %d): %v", exitCode, err))
+	} else {
+		r.msgChan <- logLineMsg(fmt.Sprintf("✔ Command completed (exit 0)"))
 	}
-	r.msgChan <- taskFinishedMsg{Success: err == nil, Err: err}
+	return ProcessResult{ExitCode: exitCode, Err: err}
+}
+
+func (r *RuntimeState) runProcessAndStreamLogs(root, command string, args []string) {
+	result := r.runProcessStream(root, command, args)
+	r.msgChan <- taskFinishedMsg{Success: result.Err == nil, Err: result.Err}
 }
 
 func (r *RuntimeState) runProcessAndStreamLogsSilent(root, command string, args []string) error {
-	cmd := exec.Command(command, args...)
-	cmd.Dir = root
-
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		r.msgChan <- logLineMsg(fmt.Sprintf("✗ Failed to pipe stdout: %v", err))
-		return err
-	}
-	cmd.Stderr = cmd.Stdout
-
-	if err := cmd.Start(); err != nil {
-		r.msgChan <- logLineMsg(fmt.Sprintf("✗ Failed to start process: %v", err))
-		return err
-	}
-
-	reader := bufio.NewReader(stdout)
-	for {
-		line, err := reader.ReadString('\n')
-		if err != nil {
-			break
-		}
-		r.msgChan <- logLineMsg(strings.TrimRight(line, "\r\n"))
-	}
-
-	err = cmd.Wait()
-	if err != nil {
-		r.msgChan <- logLineMsg(fmt.Sprintf("✗ Command failed: %v", err))
-	}
-	return err
+	result := r.runProcessStream(root, command, args)
+	return result.Err
 }
 
 func (m *TuiModel) RunSetupTask(adds map[string]string) {
-	// If this is a new setup run (not in progress), initialize/reset fields
-	if !m.setupInProgress {
-		m.setupInProgress = true
-		m.setupStep = 0
-		m.setupAdds = make(map[string]string)
-		m.setupCloned = make(map[string]bool)
-
-		cloneCount := 0
-		for _, method := range adds {
-			if method == "git-https" || method == "git-ssh" {
-				cloneCount++
-			}
-		}
-		m.setupTotalSteps = cloneCount + 2
-	} else {
-		cloneCount := 0
-		for _, method := range adds {
-			if method == "git-https" || method == "git-ssh" {
-				cloneCount++
-			}
-		}
-		m.setupTotalSteps += cloneCount
-	}
-
-	// Merge adds into setupAdds
-	for pkg, method := range adds {
-		m.setupAdds[pkg] = method
-	}
-
 	workspaceRoot := m.workspaceRoot
 	msgChan := m.runtime.msgChan
 	runtime := m.runtime
-	startStep := m.setupStep
-	totalSteps := m.setupTotalSteps
-
-	// Capture setupAdds and setupCloned
-	allSetupAdds := make(map[string]string)
-	for k, v := range m.setupAdds {
-		allSetupAdds[k] = v
-	}
-	allSetupCloned := make(map[string]bool)
-	for k, v := range m.setupCloned {
-		allSetupCloned[k] = v
-	}
-
-	// Capture adds to process in this run
-	currentBatch := make(map[string]string)
-	for k, v := range adds {
-		currentBatch[k] = v
-	}
 
 	var catalogEntries []bridge.CatalogEntry
 	if m.catalog != nil {
@@ -147,8 +88,21 @@ func (m *TuiModel) RunSetupTask(adds map[string]string) {
 		copy(catalogEntries, m.catalog.Entries)
 	}
 
+	currentBatch := make(map[string]string)
+	for k, v := range adds {
+		currentBatch[k] = v
+	}
+
+	cloneCount := 0
+	for _, method := range adds {
+		if method == "git-https" || method == "git-ssh" {
+			cloneCount++
+		}
+	}
+	totalSteps := cloneCount + 2
+	step := 0
+
 	go func() {
-		step := startStep
 		msgChan <- setupProgressMsg{Step: step, Total: totalSteps, Label: "Initializing…"}
 
 		// clonedDirs tracks successfully cloned target directories for dep scanning in this batch
@@ -213,16 +167,7 @@ func (m *TuiModel) RunSetupTask(adds map[string]string) {
 		// ── Phase 1.5: Scan cloned packages for kit-* / module-* deps ────────
 		var newlyDiscovered []string
 		seenDep := map[string]bool{}
-
-		// Mark packages already cloned/cloning as seen
-		for k := range allSetupAdds {
-			short := k
-			if idx := strings.LastIndex(k, "/"); idx >= 0 {
-				short = k[idx+1:]
-			}
-			seenDep[short] = true
-		}
-		for k := range allSetupCloned {
+		for k := range currentBatch {
 			short := k
 			if idx := strings.LastIndex(k, "/"); idx >= 0 {
 				short = k[idx+1:]
@@ -281,16 +226,8 @@ func (m *TuiModel) RunSetupTask(adds map[string]string) {
 			}
 		}
 
-		// Report cloned packages and detected dependencies back to main thread
-		var clonedPkgNames []string
-		for _, ci := range clonedDirs {
-			clonedPkgNames = append(clonedPkgNames, ci.pkgName)
-		}
-		msgChan <- setupClonedMsg{Cloned: clonedPkgNames, Step: step}
-
 		if len(newlyDiscovered) > 0 {
-			msgChan <- depsDetectedMsg{Deps: newlyDiscovered}
-			return
+			msgChan <- logLineMsg(fmt.Sprintf("⚠ Missing dependencies discovered (use Save wizard): %v", newlyDiscovered))
 		}
 
 		// ── Phase 2: pnpm install ─────────────────────────────────────────────

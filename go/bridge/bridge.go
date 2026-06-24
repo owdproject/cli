@@ -168,8 +168,25 @@ func ReadCatalog(root string, force bool) (*CatalogResponse, error) {
 	return &cat, nil
 }
 
+// WriteConfigOnly writes desktop.config.ts (theme/apps/modules only).
+func WriteConfigOnly(root string, config *Config) error {
+	return writeBridge(root, &WritePayload{Config: config})
+}
+
+// WritePackageJsonDeps updates desktop/package.json dependencies.
+func WritePackageJsonDeps(root string, toAdd map[string]string, toRemove []string) error {
+	return writeBridge(root, &WritePayload{
+		DepsToAdd:    toAdd,
+		DepsToRemove: toRemove,
+	})
+}
+
 // WriteChanges feeds the write payload to the node bridge via stdin
 func WriteChanges(root string, payload *WritePayload) error {
+	return writeBridge(root, payload)
+}
+
+func writeBridge(root string, payload *WritePayload) error {
 	cmd := exec.Command("node", getBridgePath(root), "--write")
 	cmd.Dir = root
 	var stdout, stderr bytes.Buffer

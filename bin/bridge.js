@@ -12,7 +12,8 @@ import {
   readDesktopConfig,
   writeDesktopConfig,
   readDesktopDependencies,
-  writeDesktopDependencies
+  writeDesktopDependencies,
+  resolveConfigPathForWrite
 } from './lib/config.js'
 import { loadCatalog, mergeInstalled } from './lib/catalog.js'
 import { resolveDevTarget } from './lib/playgroundContext.js'
@@ -98,7 +99,8 @@ async function main() {
       // payload = { config: { theme, apps, modules }, depsToAdd: { name: version }, depsToRemove: [name], settings?: { ... } }
       
       if (payload.config) {
-        writeDesktopConfig(ctx.paths.config, ctx.workspaceRoot, payload.config)
+        const configPath = resolveConfigPathForWrite(ctx.paths)
+        writeDesktopConfig(configPath, ctx.workspaceRoot, payload.config)
       }
       
       if (payload.depsToAdd || payload.depsToRemove) {

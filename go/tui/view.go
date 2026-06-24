@@ -62,7 +62,7 @@ func (m *TuiModel) View() string {
 		var rightPanel string
 		logContent := m.renderLogsPanel(rightW-4, h-barH-2)
 		baseTitle := "Logs"
-		if m.wizard != nil && !m.wizard.IsComplete() {
+		if m.activePrompt == PromptResolveDependency {
 			baseTitle = "Wizard Setup"
 		} else if m.activeTask == TaskSetup || m.activeTask == TaskWipe {
 			baseTitle = "Setup"
@@ -84,7 +84,9 @@ func (m *TuiModel) View() string {
 		catalogContent := m.renderCatalogPanel(catW-4, catalogH-2, showRightPanel)
 		catalogPanel = drawPanel(catW-1, catalogH, "Catalog", catalogContent, true)
 		promptToShow := m.activePrompt
-		if (m.activeTask == TaskSetup || m.activeTask == TaskWipe) && (promptToShow == PromptNone || promptToShow == PromptUninstallConfirm || promptToShow == PromptInstallMethod || promptToShow == PromptWipeWorkspaceConfirm) {
+		if (m.activeTask == TaskSetup || m.activeTask == TaskWipe) &&
+			m.activePrompt != PromptResolveDependency &&
+			(promptToShow == PromptNone || promptToShow == PromptUninstallConfirm || promptToShow == PromptInstallMethod || promptToShow == PromptWipeWorkspaceConfirm) {
 			promptToShow = PromptSetupProgress
 		}
 		if promptToShow != PromptNone {
@@ -109,7 +111,9 @@ func (m *TuiModel) View() string {
 		catalogContent := m.renderCatalogPanel(w-4, catalogH-2, showRightPanel)
 		catalogPanel = drawPanel(w, catalogH, "Catalog", catalogContent, true)
 		promptToShow := m.activePrompt
-		if (m.activeTask == TaskSetup || m.activeTask == TaskWipe) && (promptToShow == PromptNone || promptToShow == PromptUninstallConfirm || promptToShow == PromptInstallMethod || promptToShow == PromptWipeWorkspaceConfirm) {
+		if (m.activeTask == TaskSetup || m.activeTask == TaskWipe) &&
+			m.activePrompt != PromptResolveDependency &&
+			(promptToShow == PromptNone || promptToShow == PromptUninstallConfirm || promptToShow == PromptInstallMethod || promptToShow == PromptWipeWorkspaceConfirm) {
 			promptToShow = PromptSetupProgress
 		}
 		if promptToShow != PromptNone {
@@ -525,24 +529,25 @@ func (m *TuiModel) renderLogsPanel(w, h int) string {
 	var lines []string
 	lines = append(lines, "")
 
-	// Wizard progress info — shown during active wizard
-	if m.wizard != nil && !m.wizard.IsComplete() {
-		curr := m.wizard.Current()
+	// Work queue panel — shown during wizard engine
+	if m.workQueue != nil && m.activeTask == TaskSetup && len(m.workQueue.Items) > 0 {
+		completed, total := m.workQueue.Progress()
+		lines = append(lines, "  "+boldStyle.Render(fmt.Sprintf("Work Queue (%d/%d)", completed, total)))
 		spinnerFrames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
-		frame := spinnerFrames[m.tickCount%len(spinnerFrames)]
-		spin := cyanBoldStyle.Render(frame)
-
-		var stepMsg string
-		if curr.Action == "uninstall" {
-			stepMsg = fmt.Sprintf("Awaiting decision: Uninstall %s", curr.ShortName)
-		} else if curr.Action == "install" {
-			stepMsg = fmt.Sprintf("Awaiting decision: Install %s", curr.ShortName)
-		} else {
-			stepMsg = fmt.Sprintf("Awaiting decision: %s %s", curr.Action, curr.ShortName)
+		spin := cyanBoldStyle.Render(spinnerFrames[m.tickCount%len(spinnerFrames)])
+		for _, item := range m.workQueue.Items {
+			icon := item.StatusIcon()
+			label := mutedStyle.Render(item.ShortName)
+			status := string(item.Status)
+			if item.Status == StatusRunning {
+				lines = append(lines, "  "+spin+" "+icon+" "+label+"  "+accentStyle.Render(status))
+			} else {
+				lines = append(lines, "  "+icon+" "+label+"  "+mutedStyle.Render(status))
+			}
 		}
-
-		lines = append(lines, "  "+spin+" "+boldStyle.Render(stepMsg))
-		lines = append(lines, "  "+mutedStyle.Render(fmt.Sprintf("Step %d of %d in wizard queue", m.wizard.Index+1, len(m.wizard.Queue))))
+		if m.enginePhase != PhaseIdle && m.enginePhase != "" {
+			lines = append(lines, "  "+mutedStyle.Render("Phase: "+string(m.enginePhase)))
+		}
 		lines = append(lines, "")
 	}
 
@@ -565,7 +570,7 @@ func (m *TuiModel) renderLogsPanel(w, h int) string {
 		if m.setupTotalSteps > 0 {
 			progPct = (m.setupStep * 100) / m.setupTotalSteps
 		}
-		lines = append(lines, "  "+accentStyle.Render(fmt.Sprintf("%s %d%%", progBar, progPct)))
+		lines = append(lines, "  "+accentStyle.Render(fmt.Sprintf("%s %d%% (%d/%d)", progBar, progPct, m.setupStep, m.setupTotalSteps)))
 		lines = append(lines, "  "+mutedStyle.Render(m.setupLabel))
 		lines = append(lines, "")
 	}

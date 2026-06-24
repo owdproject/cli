@@ -878,4 +878,9 @@ func (m *TuiModel) resolveOwner(pkgName string) string {
 	return "owdproject"
 }
 
+func (m *TuiModel) logInfo(msg string)    { m.addLog("ℹ " + msg) }
+func (m *TuiModel) logSuccess(msg string) { m.addLog("✔ " + msg) }
+func (m *TuiModel) logWarn(msg string)    { m.addLog("⚠ " + msg) }
+func (m *TuiModel) logError(msg string)   { m.addLog("✖ " + msg) }
+
 

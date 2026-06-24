@@ -41,6 +41,8 @@ func (m *TuiModel) renderModal(prompt PromptType) string {
 		return m.renderUninstallConfirmModal(pkg)
 	case PromptForceReinstallConfirm:
 		return m.renderForceReinstallConfirmModal(pkg)
+	case PromptResolveDependency:
+		return m.renderResolveDependencyModal()
 	case PromptSetupProgress:
 		return m.renderSetupProgressModal()
 	case PromptManagePackage:
@@ -120,6 +122,39 @@ func (m *TuiModel) renderForceReinstallConfirmModal(pkg *bridge.CatalogEntry) st
 	return modalStyle.Render(content.String())
 }
 
+func (m *TuiModel) renderResolveDependencyModal() string {
+	var content strings.Builder
+	item := m.promptItem
+	shortName := "package"
+	if item != nil {
+		shortName = item.ShortName
+	}
+	if item != nil && item.Discovered {
+		content.WriteString(boldStyle.Render(shortName) + " was discovered as a required dependency\n\n")
+	} else {
+		content.WriteString(boldStyle.Render(shortName) + " is configured as workspace:*\n\n")
+	}
+	content.WriteString("How do you want to resolve it?\n\n")
+
+	options := []struct {
+		Name  string
+		Label string
+	}{
+		{"git-ssh", "Git SSH"},
+		{"git-https", "Git HTTPS"},
+		{"npm", "NPM Package"},
+	}
+	for i, opt := range options {
+		if i == m.promptSel {
+			content.WriteString("  " + modalOptionActive.Render(opt.Label) + "\n")
+		} else {
+			content.WriteString("  " + modalOptionInactive.Render(opt.Label) + "\n")
+		}
+	}
+	content.WriteString("\n" + subtleStyle.Render("↑↓ select  Enter confirm  Esc cancel"))
+	return modalStyle.Width(72).Render(content.String())
+}
+
 func (m *TuiModel) renderSetupProgressModal() string {
 	var content strings.Builder
 	spinnerFrames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
@@ -136,7 +171,10 @@ func (m *TuiModel) renderSetupProgressModal() string {
 	if m.setupTotalSteps > 0 {
 		bar := renderProgressBar(m.setupStep, m.setupTotalSteps, 40)
 		content.WriteString("  " + bar + "\n")
-		content.WriteString(fmt.Sprintf("  Step %d of %d\n", m.setupStep, m.setupTotalSteps))
+		content.WriteString(fmt.Sprintf("  Progress %d/%d\n", m.setupStep, m.setupTotalSteps))
+		if m.enginePhase != PhaseIdle && m.enginePhase != "" {
+			content.WriteString("  " + mutedStyle.Render("Phase: "+string(m.enginePhase)) + "\n")
+		}
 	} else {
 		content.WriteString("  " + renderProgressBar(0, 1, 40) + "\n")
 		content.WriteString("  Preparing...\n")

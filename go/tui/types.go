@@ -38,16 +38,6 @@ type serverStatusMsg struct {
 	Running bool
 }
 
-type promptThemeDepMsg struct {
-	DepName   string
-	ShortName string
-}
-
-type themeDepDecision struct {
-	install bool
-	method  string
-}
-
 type tickMsg time.Time
 
 type memTickMsg struct {
@@ -84,13 +74,16 @@ type setupProgressMsg struct {
 	Label string
 }
 
-type setupClonedMsg struct {
-	Cloned []string
-	Step   int
+type engineNeedsPromptMsg struct {
+	Item WorkItem
 }
 
-type depsDetectedMsg struct {
-	Deps []string
+type engineQueueUpdatedMsg struct {
+	Queue WorkQueue
+}
+
+type enginePhaseMsg struct {
+	Phase EnginePhase
 }
 
 type workspaceGitStatusMsg struct {
@@ -117,9 +110,8 @@ const (
 	PromptManagePackage
 	PromptForceReinstallConfirm
 	PromptSettings
-	PromptThemeDepConfirm
-	PromptThemeDepMethod
 	PromptSetupProgress
+	PromptResolveDependency
 	PromptWipeWorkspaceConfirm
 )
 
@@ -134,10 +126,11 @@ const (
 
 // RuntimeState holds references to mutable OS/runtime resources.
 type RuntimeState struct {
-	serverCmd *exec.Cmd
-	serverMu  sync.Mutex
-	logCancel context.CancelFunc
-	msgChan   chan tea.Msg
+	serverCmd    *exec.Cmd
+	serverMu     sync.Mutex
+	logCancel    context.CancelFunc
+	msgChan      chan tea.Msg
+	engineResume chan string
 }
 
 // ─────────────────────────────────────────────
@@ -222,19 +215,15 @@ type TuiModel struct {
 	pendingPackages map[string]bool // pkgName -> install(true)/uninstall(false)
 	pendingTheme    *string         // pointer to theme name to activate
 
-	// Wizard / Review Queue
-	wizard *Wizard
+	// Wizard engine
+	workQueue   *WorkQueue
+	enginePhase EnginePhase
+	promptItem  *WorkItem
 
-	activeThemeDep  string
-	startupCheckDone bool
 	startServerAfterSetup bool
-	setupStep        int
-	setupTotalSteps  int
-	setupLabel       string
-	workspaceBranch  string
-	workspaceChanges string
-	justInstalledAdds map[string]string // pkgName → method, for post-install dep check
-	setupInProgress   bool
-	setupAdds         map[string]string // pkgName -> method
-	setupCloned       map[string]bool   // pkgName -> true
+	setupStep             int
+	setupTotalSteps       int
+	setupLabel            string
+	workspaceBranch       string
+	workspaceChanges      string
 }
