@@ -105,57 +105,98 @@ func (m *TuiModel) RunSetupTask(adds map[string]string) {
 	}
 
 	go func() {
-		desktopJs := filepath.Join(workspaceRoot, "packages", "cli", "bin", "desktop.js")
-
 		totalSteps := len(adds) + 2
 		step := 0
-		msgChan <- setupProgressMsg{Step: step, Total: totalSteps, Label: "Initializing setup task…"}
+		msgChan <- setupProgressMsg{Step: step, Total: totalSteps, Label: "Initializing…"}
 
-		// 1. Process all additions
+		// 1. Clone each package via git directly (bridge.WriteChanges already updated
+		//    package.json and desktop.config.ts, so we just need the git clone)
 		for pkgName, method := range adds {
 			step++
 			shortName := pkgName
 			if idx := strings.LastIndex(pkgName, "/"); idx >= 0 {
 				shortName = pkgName[idx+1:]
 			}
-			msgChan <- setupProgressMsg{Step: step, Total: totalSteps, Label: fmt.Sprintf("Installing %s via %s…", shortName, method)}
 
-			args := []string{desktopJs, "add", shortName}
+			msgChan <- setupProgressMsg{Step: step, Total: totalSteps, Label: fmt.Sprintf("Cloning %s…", shortName)}
+
 			if method == "npm" {
-				args = append(args, "--npm")
-			} else if method == "local" {
-				args = append(args, "--dev")
-			} else {
-				owner := "owdproject"
-				if githubUser != "" {
-					owner = githubUser
-				} else {
-					for _, e := range catalogEntries {
-						if e.Name == pkgName && e.Org != "" {
-							owner = e.Org
-							break
-						}
-					}
-				}
-
-				var fromVal string
-				if method == "git-ssh" {
-					fromVal = fmt.Sprintf("git@github.com:%s/%s.git", owner, shortName)
-				} else {
-					fromVal = fmt.Sprintf("https://github.com/%s/%s.git", owner, shortName)
-				}
-				args = append(args, "--from", fromVal)
+				// npm install: will be handled by pnpm install below; nothing to clone
+				msgChan <- logLineMsg(fmt.Sprintf(">>> %s will be installed via npm (pnpm install)", shortName))
+				continue
 			}
 
-			msgChan <- logLineMsg(fmt.Sprintf(">>> Executing: node desktop.js add %s via %s", shortName, method))
-			if err := runtime.runProcessAndStreamLogsSilent(workspaceRoot, "node", args); err != nil {
-				msgChan <- logLineMsg(fmt.Sprintf(">>> Add %s failed: %v", shortName, err))
+			if method == "local" {
+				// local workspace folder already present; nothing to clone
+				msgChan <- logLineMsg(fmt.Sprintf(">>> %s already available as local workspace package", shortName))
+				continue
+			}
+
+			// Determine target directory based on package kind
+			kindDir := ""
+			for _, e := range catalogEntries {
+				if e.Name == pkgName {
+					switch e.Kind {
+					case "app":
+						kindDir = "apps"
+					case "module":
+						kindDir = "packages"
+					case "theme":
+						kindDir = "themes"
+					}
+					break
+				}
+			}
+			if kindDir == "" {
+				// Infer from shortname prefix
+				switch {
+				case strings.HasPrefix(shortName, "app-"):
+					kindDir = "apps"
+				case strings.HasPrefix(shortName, "theme-"):
+					kindDir = "themes"
+				default:
+					kindDir = "packages"
+				}
+			}
+
+			targetDir := filepath.Join(workspaceRoot, kindDir, shortName)
+
+			// Skip if already cloned
+			if _, err := os.Stat(filepath.Join(targetDir, "package.json")); err == nil {
+				msgChan <- logLineMsg(fmt.Sprintf(">>> %s already cloned — skipping", shortName))
+				continue
+			}
+
+			// Resolve git URL
+			owner := "owdproject"
+			if githubUser != "" {
+				owner = githubUser
+			} else {
+				for _, e := range catalogEntries {
+					if e.Name == pkgName && e.Org != "" {
+						owner = e.Org
+						break
+					}
+				}
+			}
+
+			var gitURL string
+			if method == "git-ssh" {
+				gitURL = fmt.Sprintf("git@github.com:%s/%s.git", owner, shortName)
+			} else {
+				gitURL = fmt.Sprintf("https://github.com/%s/%s.git", owner, shortName)
+			}
+
+			msgChan <- logLineMsg(fmt.Sprintf(">>> Cloning %s from %s", shortName, gitURL))
+			if err := runtime.runProcessAndStreamLogsSilent(workspaceRoot, "git", []string{"clone", gitURL, targetDir}); err != nil {
+				msgChan <- logLineMsg(fmt.Sprintf(">>> Clone failed for %s: %v", shortName, err))
 				msgChan <- taskFinishedMsg{Success: false, Err: err}
 				return
 			}
+			msgChan <- logLineMsg(fmt.Sprintf(">>> ✓ %s cloned successfully", shortName))
 		}
 
-		// 2. Run pnpm install for cleanup/removal sync
+		// 2. Sync workspace with pnpm install
 		step++
 		msgChan <- setupProgressMsg{Step: step, Total: totalSteps, Label: "Installing dependencies (pnpm install)…"}
 		msgChan <- logLineMsg(">>> Running pnpm install (syncing workspace)…")
