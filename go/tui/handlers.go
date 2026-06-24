@@ -401,6 +401,7 @@ func (m *TuiModel) triggerInstall(pkg *bridge.CatalogEntry, method string) (tea.
 	m.activeTask = TaskSetup
 	m.statusMsg = fmt.Sprintf("Installing %s via %s…", pkg.ShortName, method)
 	m.addLog(fmt.Sprintf(">>> Installing %s via %s", pkg.Name, method))
+	m.justInstalledAdds = map[string]string{pkg.Name: method}
 
 	payload := &bridge.WritePayload{
 		Config:    &bridge.Config{Theme: m.ctx.Config.Theme, Apps: m.ctx.Config.Apps, Modules: m.ctx.Config.Modules},
@@ -492,6 +493,7 @@ func (m *TuiModel) triggerForceReinstall(pkg *bridge.CatalogEntry) (tea.Model, t
 		}
 	}
 
+	m.justInstalledAdds = map[string]string{pkg.Name: method}
 	m.RunSetupTask(map[string]string{pkg.Name: method})
 	return m, m.listenToChannel()
 }
@@ -563,7 +565,8 @@ func (m *TuiModel) startStartupCheck() tea.Cmd {
 	queued := map[string]bool{}
 
 	for _, entry := range m.catalog.Entries {
-		if entry.Installed && !entry.LocalSource && !entry.InPackageJson {
+		// Package is in config but not yet locally cloned → needs setup
+		if entry.Installed && !entry.LocalSource {
 			m.promptQueue = append(m.promptQueue, pendingDecision{
 				PkgName:   entry.Name,
 				ShortName: entry.ShortName,
@@ -697,6 +700,11 @@ func (m *TuiModel) applyQueueChangesCmd() tea.Cmd {
 	m.activeTask = TaskSetup
 	m.statusMsg = "Applying queued package changes…"
 	m.addLog(">>> Applying queued package configuration changes…")
+	// Save adds for post-install dependency checking (phase 2)
+	m.justInstalledAdds = make(map[string]string)
+	for k, v := range m.finalizedAdds {
+		m.justInstalledAdds[k] = v
+	}
 
 	payload := &bridge.WritePayload{
 		Config:       &bridge.Config{Theme: m.ctx.Config.Theme, Apps: m.ctx.Config.Apps, Modules: m.ctx.Config.Modules},
@@ -992,4 +1000,106 @@ func (m *TuiModel) updateSettingsFocus() {
 		m.settingsOrgsInput.Blur()
 		m.settingsUserInput.Blur()
 	}
+}
+
+// checkPostInstallDeps checks the package.json of every just-installed package for
+// @owdproject/* dependencies whose shortname starts with "module-" or "kit-".
+// If any are found that aren't already locally available, it builds a new prompt queue
+// and returns the first decision cmd (phase 2 of the install flow).
+func (m *TuiModel) checkPostInstallDeps(justInstalled map[string]string) tea.Cmd {
+	if m.catalog == nil || len(justInstalled) == 0 {
+		return nil
+	}
+
+	nonInstallable := map[string]bool{
+		"@owdproject/core": true,
+		"@owdproject/cli":  true,
+		"@owdproject/nx":   true,
+	}
+
+	// Build set of packages already locally cloned
+	alreadyHave := map[string]bool{}
+	for _, e := range m.catalog.Entries {
+		if e.LocalSource {
+			alreadyHave[e.Name] = true
+		}
+	}
+
+	// Reset queue for phase 2
+	m.promptQueue = []pendingDecision{}
+	m.promptQueueIndex = 0
+	m.finalizedAdds = make(map[string]string)
+	m.finalizedRemoves = []string{}
+	m.finalizedTheme = nil
+
+	queued := map[string]bool{}
+
+	for pkgName := range justInstalled {
+		// Find catalog entry to get shortName and kind
+		var srcEntry *bridge.CatalogEntry
+		for i := range m.catalog.Entries {
+			if m.catalog.Entries[i].Name == pkgName {
+				srcEntry = &m.catalog.Entries[i]
+				break
+			}
+		}
+		if srcEntry == nil {
+			continue
+		}
+
+		// Read deps from local package.json (just cloned or already present)
+		deps, found := getOwdDepsLocal(m.workspaceRoot, srcEntry.ShortName, srcEntry.Kind)
+		if !found {
+			// Fallback: fetch from npm registry (e.g. if installed via npm)
+			deps, _ = getOwdDepsFromNpm(pkgName)
+		}
+
+		for _, dep := range deps {
+			if nonInstallable[dep] || alreadyHave[dep] || queued[dep] {
+				continue
+			}
+			short := dep
+			if idx := strings.LastIndex(dep, "/"); idx >= 0 {
+				short = dep[idx+1:]
+			}
+			if isLocallyAvailable(m.workspaceRoot, short) {
+				continue
+			}
+
+			// Find in catalog
+			var depEntry bridge.CatalogEntry
+			found := false
+			for _, e := range m.catalog.Entries {
+				if e.Name == dep {
+					depEntry = e
+					found = true
+					break
+				}
+			}
+			if !found {
+				depEntry = bridge.CatalogEntry{
+					Name:      dep,
+					ShortName: short,
+					Kind:      "module",
+				}
+			}
+
+			m.promptQueue = append(m.promptQueue, pendingDecision{
+				PkgName:   dep,
+				ShortName: short,
+				Action:    "install",
+				Kind:      depEntry.Kind,
+				Entry:     depEntry,
+			})
+			queued[dep] = true
+		}
+	}
+
+	if len(m.promptQueue) == 0 {
+		return nil
+	}
+
+	m.addLog(fmt.Sprintf(">>> Found %d additional dependenc%s to install.",
+		len(m.promptQueue), map[bool]string{true: "y", false: "ies"}[len(m.promptQueue) == 1]))
+	return tea.Batch(m.processNextQueueDecision(), m.listenToChannel())
 }

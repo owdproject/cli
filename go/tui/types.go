@@ -234,4 +234,5 @@ type TuiModel struct {
 	setupLabel       string
 	workspaceBranch  string
 	workspaceChanges string
+	justInstalledAdds map[string]string // pkgName → method, for post-install dep check
 }

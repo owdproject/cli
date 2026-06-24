@@ -806,8 +806,8 @@ func (m *TuiModel) getInstallMethods(pkg *bridge.CatalogEntry) []InstallMethod {
 		})
 	}
 
-	// 1. NPM Registry
-	if pkg.SourcesMeta != nil && pkg.SourcesMeta.Npm != nil {
+	// 1. NPM Registry — only when NOT already configured as workspace:* in package.json
+	if !pkg.InPackageJson && pkg.SourcesMeta != nil && pkg.SourcesMeta.Npm != nil {
 		methods = append(methods, InstallMethod{
 			Name:  "npm",
 			Label: "NPM Registry",

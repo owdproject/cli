@@ -173,6 +173,8 @@ func (m *TuiModel) RunSetupTask(adds map[string]string) {
 			return
 		}
 
+		// Small pause so the user sees the progress bar reach 100% before it closes
+		time.Sleep(500 * time.Millisecond)
 		msgChan <- taskFinishedMsg{Success: true}
 	}()
 }

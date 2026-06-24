@@ -45,6 +45,7 @@ func NewModel(root string) TuiModel {
 		activeTask:          TaskNone,
 		workspaceBranch:     "—",
 		workspaceChanges:    "clean",
+		justInstalledAdds:   make(map[string]string),
 	}
 }
 
@@ -488,6 +489,17 @@ func (m *TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Success {
 			m.statusMsg = "Task completed."
 			m.addLog(">>> Task completed successfully.")
+
+			// Phase 2: check deps of newly installed packages
+			if len(m.justInstalledAdds) > 0 {
+				justInstalled := m.justInstalledAdds
+				m.justInstalledAdds = make(map[string]string)
+				if depCmd := m.checkPostInstallDeps(justInstalled); depCmd != nil {
+					m.statusMsg = "Found additional dependencies. Choose install method…"
+					return m, tea.Batch(depCmd, m.loadContextCmd(), m.listenToChannel())
+				}
+			}
+
 			if m.startServerAfterSetup {
 				m.startServerAfterSetup = false
 				m.statusMsg = "Starting dev server…"
