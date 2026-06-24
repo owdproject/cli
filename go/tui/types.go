@@ -84,6 +84,15 @@ type setupProgressMsg struct {
 	Label string
 }
 
+type setupClonedMsg struct {
+	Cloned []string
+	Step   int
+}
+
+type depsDetectedMsg struct {
+	Deps []string
+}
+
 type workspaceGitStatusMsg struct {
 	Branch  string
 	Changes string
@@ -154,13 +163,7 @@ const (
 // Model
 // ─────────────────────────────────────────────
 
-type pendingDecision struct {
-	PkgName   string
-	ShortName string
-	Action    string // "install" or "uninstall"
-	Kind      string // "app", "module", "theme"
-	Entry     bridge.CatalogEntry
-}
+
 
 type TuiModel struct {
 	workspaceRoot string
@@ -220,11 +223,7 @@ type TuiModel struct {
 	pendingTheme    *string         // pointer to theme name to activate
 
 	// Wizard / Review Queue
-	promptQueue      []pendingDecision
-	promptQueueIndex int
-	finalizedAdds    map[string]string // pkgName -> method
-	finalizedRemoves []string          // pkgNames
-	finalizedTheme   *string           // theme name to activate
+	wizard *Wizard
 
 	activeThemeDep  string
 	startupCheckDone bool
@@ -235,4 +234,7 @@ type TuiModel struct {
 	workspaceBranch  string
 	workspaceChanges string
 	justInstalledAdds map[string]string // pkgName → method, for post-install dep check
+	setupInProgress   bool
+	setupAdds         map[string]string // pkgName -> method
+	setupCloned       map[string]bool   // pkgName -> true
 }

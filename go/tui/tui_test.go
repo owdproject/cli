@@ -61,3 +61,50 @@ func TestWipeDirectory(t *testing.T) {
 		}
 	}
 }
+
+func TestNewModelSetupState(t *testing.T) {
+	model := NewModel("test-root")
+	if model.setupInProgress {
+		t.Error("Expected setupInProgress to be false initially")
+	}
+	if model.setupAdds == nil {
+		t.Error("Expected setupAdds to be initialized")
+	}
+	if model.setupCloned == nil {
+		t.Error("Expected setupCloned to be initialized")
+	}
+}
+
+func TestSetupMessages(t *testing.T) {
+	model := NewModel("test-root")
+
+	// Test setupClonedMsg updates setupCloned map and setupStep
+	m2, _ := (&model).Update(setupClonedMsg{Cloned: []string{"pkg-a", "pkg-b"}, Step: 3})
+	updatedModel := m2.(*TuiModel)
+	if updatedModel.setupStep != 3 {
+		t.Errorf("Expected setupStep to be 3, got %d", updatedModel.setupStep)
+	}
+	if !updatedModel.setupCloned["pkg-a"] || !updatedModel.setupCloned["pkg-b"] {
+		t.Error("Expected cloned packages to be registered in setupCloned")
+	}
+
+	// Test depsDetectedMsg pauses setup task and populates promptedModel.wizard
+	m3, _ := updatedModel.Update(depsDetectedMsg{Deps: []string{"@owdproject/kit-tailwind"}})
+	promptedModel := m3.(*TuiModel)
+	if promptedModel.activeTask != TaskNone {
+		t.Errorf("Expected activeTask to be TaskNone, got %v", promptedModel.activeTask)
+	}
+	if !promptedModel.setupInProgress {
+		t.Error("Expected setupInProgress to remain true during prompt")
+	}
+	if promptedModel.wizard == nil {
+		t.Fatal("Expected promptedModel.wizard to be initialized")
+	}
+	if len(promptedModel.wizard.Queue) != 1 {
+		t.Errorf("Expected wizard queue size to be 1, got %d", len(promptedModel.wizard.Queue))
+	}
+	if promptedModel.wizard.Queue[0].PkgName != "@owdproject/kit-tailwind" {
+		t.Errorf("Expected queued package name to be @owdproject/kit-tailwind, got %s", promptedModel.wizard.Queue[0].PkgName)
+	}
+}
+

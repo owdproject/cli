@@ -20,7 +20,7 @@ func main() {
 	}
 
 	model := tui.NewModel(root)
-	p = tea.NewProgram(&model, tea.WithAltScreen())
+	p = tea.NewProgram(&model, tea.WithAltScreen(), tea.WithMouseCellMotion())
 
 	finalModel, err := p.Run()
 	if err != nil {

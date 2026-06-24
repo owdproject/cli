@@ -1,4 +1,4 @@
-import { readFileSync, existsSync, copyFileSync } from 'node:fs'
+import { readFileSync, writeFileSync, existsSync, copyFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { join } from 'node:path'
 import { SCOPE } from './workspace.js'

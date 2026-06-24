@@ -24,7 +24,7 @@ func (m *TuiModel) View() string {
 	}
 	h = h - 1 // Safety margin of 1 line at the bottom to prevent scrolling
 
-	showRightPanel := (m.serverRunning || m.activeTask != TaskNone) && w >= 120
+	showRightPanel := w >= 120
 
 	// Heights
 	topH := 9    // top panels row (with borders = 9 rows)
@@ -61,10 +61,17 @@ func (m *TuiModel) View() string {
 		catW := leftW + midW
 		var rightPanel string
 		logContent := m.renderLogsPanel(rightW-4, h-barH-2)
-		rightPanelTitle := "Logs"
-		if m.activeTask == TaskSetup || m.activeTask == TaskWipe {
-			rightPanelTitle = "Setup"
+		baseTitle := "Logs"
+		if m.wizard != nil && !m.wizard.IsComplete() {
+			baseTitle = "Wizard Setup"
+		} else if m.activeTask == TaskSetup || m.activeTask == TaskWipe {
+			baseTitle = "Setup"
 		}
+		baseStyle := lipgloss.NewStyle().Foreground(colorWhite).Bold(true)
+		styledBase := baseStyle.Render(baseTitle)
+		clearBtn := lipgloss.NewStyle().Foreground(colorAccent).Bold(true).Render("[Clear]")
+		rightPanelTitle := styledBase + "  " + clearBtn
+
 		rightPanel = drawPanel(rightW, h-barH, rightPanelTitle, logContent, false)
 
 		// Top 2-panel row (left + mid)
@@ -516,8 +523,28 @@ func (m *TuiModel) isServerCmdNil() bool {
 
 func (m *TuiModel) renderLogsPanel(w, h int) string {
 	var lines []string
-
 	lines = append(lines, "")
+
+	// Wizard progress info — shown during active wizard
+	if m.wizard != nil && !m.wizard.IsComplete() {
+		curr := m.wizard.Current()
+		spinnerFrames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+		frame := spinnerFrames[m.tickCount%len(spinnerFrames)]
+		spin := cyanBoldStyle.Render(frame)
+
+		var stepMsg string
+		if curr.Action == "uninstall" {
+			stepMsg = fmt.Sprintf("Awaiting decision: Uninstall %s", curr.ShortName)
+		} else if curr.Action == "install" {
+			stepMsg = fmt.Sprintf("Awaiting decision: Install %s", curr.ShortName)
+		} else {
+			stepMsg = fmt.Sprintf("Awaiting decision: %s %s", curr.Action, curr.ShortName)
+		}
+
+		lines = append(lines, "  "+spin+" "+boldStyle.Render(stepMsg))
+		lines = append(lines, "  "+mutedStyle.Render(fmt.Sprintf("Step %d of %d in wizard queue", m.wizard.Index+1, len(m.wizard.Queue))))
+		lines = append(lines, "")
+	}
 
 	// Setup progress header — shown during active setup/wipe tasks
 	if (m.activeTask == TaskSetup || m.activeTask == TaskWipe) && m.setupTotalSteps > 0 {
@@ -572,11 +599,13 @@ func (m *TuiModel) renderLogsPanel(w, h int) string {
 		switch {
 		case strings.Contains(line, "WARN") || strings.Contains(line, "Warning"):
 			lines = append(lines, warnStyle.Render("  "+line))
-		case strings.Contains(line, "ERROR") || strings.Contains(line, "Error") || strings.Contains(line, "failed"):
+		case strings.Contains(line, "ERROR") || strings.Contains(line, "Error") || strings.Contains(line, "failed") || strings.HasPrefix(line, "✗"):
 			lines = append(lines, errStyle.Render("  "+line))
-		case strings.HasPrefix(line, ">>>"):
-			lines = append(lines, accentStyle.Render("  "+line))
-		case strings.Contains(line, "✓") || strings.Contains(line, "ready") || strings.Contains(line, "started"):
+		case strings.HasPrefix(line, "⚙"):
+			lines = append(lines, cyanRegularStyle.Render("  "+line))
+		case strings.HasPrefix(line, "ℹ"):
+			lines = append(lines, accentRegularStyle.Render("  "+line))
+		case strings.HasPrefix(line, "✓") || strings.Contains(line, "ready") || strings.Contains(line, "started"):
 			lines = append(lines, accentRegularStyle.Render("  "+line))
 		default:
 			lines = append(lines, mutedStyle.Render("  "+line))
@@ -591,7 +620,7 @@ func (m *TuiModel) renderLogsPanel(w, h int) string {
 			spinners := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 			spin := spinners[m.tickCount%len(spinners)]
 			lines = append(lines, mutedStyle.Render("  "+spin+" Running…"))
-		} else {
+		} else if m.serverRunning {
 			lines = append(lines, mutedStyle.Render("  Waiting for logs…"))
 		}
 	}

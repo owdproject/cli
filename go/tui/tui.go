@@ -33,7 +33,7 @@ func NewModel(root string) TuiModel {
 		logTailerStarted:  false,
 		pendingPackages:  make(map[string]bool),
 		pendingTheme:     nil,
-		finalizedAdds:    make(map[string]string),
+		wizard:           nil,
 		runtime: &RuntimeState{
 			msgChan: make(chan tea.Msg, 500),
 		},
@@ -46,6 +46,9 @@ func NewModel(root string) TuiModel {
 		workspaceBranch:     "—",
 		workspaceChanges:    "clean",
 		justInstalledAdds:   make(map[string]string),
+		setupInProgress:     false,
+		setupAdds:           make(map[string]string),
+		setupCloned:         make(map[string]bool),
 	}
 }
 
@@ -101,8 +104,12 @@ func (m *TuiModel) loadCatalogCmd(force bool) tea.Cmd {
 
 func (m *TuiModel) rebootServerCmd() tea.Cmd {
 	return func() tea.Msg {
-		m.runtime.msgChan <- logLineMsg(">>> Theme change detected. Rebooting dev server…")
-		m.StopServeTask()
+		m.runtime.msgChan <- logLineMsg("ℹ Theme change detected. Rebooting dev server…")
+		var metaDir string
+		if m.ctx != nil {
+			metaDir = m.ctx.Paths.MetaDir
+		}
+		stopServeTaskSync(m.workspaceRoot, metaDir, m.runtime)
 		time.Sleep(1500 * time.Millisecond)
 		m.RunServeTask()
 		return nil
@@ -160,6 +167,16 @@ func (m *TuiModel) hasPendingChanges() bool {
 
 func (m *TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+
+	case tea.MouseMsg:
+		if msg.Action == tea.MouseActionRelease && msg.Button == tea.MouseButtonLeft {
+			if m.isClearLogsClick(msg) {
+				m.logLines = []string{}
+				m.statusMsg = "Logs cleared."
+				return m, nil
+			}
+		}
+		return m, nil
 
 	case tea.WindowSizeMsg:
 		m.termWidth = msg.Width
@@ -270,10 +287,16 @@ func (m *TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "d":
 			if !m.serverRunning && m.activeTask == TaskNone {
-				cmd := m.startStartupCheck()
-				if m.activePrompt != PromptNone || cmd != nil {
+				if m.hasPendingChanges() {
 					m.startServerAfterSetup = true
+					cmd := m.startQueueReview()
 					return m, cmd
+				} else {
+					cmd := m.startStartupCheck()
+					if m.activePrompt != PromptNone || cmd != nil {
+						m.startServerAfterSetup = true
+						return m, cmd
+					}
 				}
 
 				m.statusMsg = "Starting dev server…"
@@ -444,6 +467,52 @@ func (m *TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.setupTotalSteps = msg.Total
 		m.setupLabel = msg.Label
 		return m, m.listenToChannel()
+	case setupClonedMsg:
+		m.setupStep = msg.Step
+		for _, pkg := range msg.Cloned {
+			m.setupCloned[pkg] = true
+		}
+		return m, m.listenToChannel()
+	case depsDetectedMsg:
+		m.activeTask = TaskNone
+		m.setupInProgress = true
+		m.addLog(fmt.Sprintf("ℹ Mid-setup: Missing dependencies detected: %v", msg.Deps))
+		if m.wizard == nil {
+			m.wizard = NewWizard([]pendingDecision{})
+		}
+
+		for _, dep := range msg.Deps {
+			var depEntry bridge.CatalogEntry
+			found := false
+			if m.catalog != nil {
+				for _, e := range m.catalog.Entries {
+					if e.Name == dep {
+						depEntry = e
+						found = true
+						break
+					}
+				}
+			}
+			if !found {
+				short := dep
+				if idx := strings.LastIndex(dep, "/"); idx >= 0 {
+					short = dep[idx+1:]
+				}
+				depEntry = bridge.CatalogEntry{
+					Name:      dep,
+					ShortName: short,
+					Kind:      "module",
+				}
+			}
+
+			m.wizard.AddInstall(dep, depEntry)
+		}
+
+		if !m.wizard.IsComplete() {
+			m.statusMsg = "Found additional dependencies. Choose install method…"
+			return m, m.processNextQueueDecision()
+		}
+		return m, m.listenToChannel()
 	case promptThemeDepMsg:
 		m.activePrompt = PromptThemeDepConfirm
 		m.activeThemeDep = msg.DepName
@@ -486,9 +555,10 @@ func (m *TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case taskFinishedMsg:
 		m.activeTask = TaskNone
+		m.setupInProgress = false
 		if msg.Success {
 			m.statusMsg = "Task completed."
-			m.addLog(">>> Task completed successfully.")
+			m.addLog("✓ Wizard changes applied successfully")
 
 			// Phase 2: check deps of newly installed packages
 			if len(m.justInstalledAdds) > 0 {
@@ -508,7 +578,7 @@ func (m *TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		} else {
 			m.statusMsg = fmt.Sprintf("Task failed: %v", msg.Err)
-			m.addLog(fmt.Sprintf(">>> Task failed: %v", msg.Err))
+			m.addLog(fmt.Sprintf("✗ Wizard changes FAILED to apply: %v", msg.Err))
 			m.startServerAfterSetup = false
 		}
 		return m, tea.Batch(m.loadContextCmd(), m.loadCatalogCmd(false), m.updateWorkspaceGitStatusCmd(), m.listenToChannel())
@@ -803,4 +873,34 @@ func (m *TuiModel) loadPackageDetails(pkg *bridge.CatalogEntry) {
 			checkDep(name)
 		}
 	}
+}
+
+func (m *TuiModel) isClearLogsClick(msg tea.MouseMsg) bool {
+	if msg.Y != 0 {
+		return false
+	}
+
+	w := m.termWidth
+	if w < 120 {
+		return false
+	}
+
+	leftW := w * 40 / 100
+	midW := w * 28 / 100
+	catW := leftW + midW
+
+	panelStartX := catW - 1
+
+	rightPanelTitle := "Logs"
+	if m.wizard != nil && !m.wizard.IsComplete() {
+		rightPanelTitle = "Wizard Setup"
+	} else if m.activeTask == TaskSetup || m.activeTask == TaskWipe {
+		rightPanelTitle = "Setup"
+	}
+
+	prefixLen := len(rightPanelTitle) + 2
+	clearStartX := panelStartX + 2 + prefixLen
+	clearEndX := clearStartX + 7
+
+	return msg.X >= clearStartX && msg.X < clearEndX
 }

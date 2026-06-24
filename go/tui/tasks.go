@@ -26,14 +26,14 @@ func (r *RuntimeState) runProcessAndStreamLogs(root, command string, args []stri
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		r.msgChan <- logLineMsg(fmt.Sprintf(">>> Failed to pipe stdout: %v", err))
+		r.msgChan <- logLineMsg(fmt.Sprintf("✗ Failed to pipe stdout: %v", err))
 		r.msgChan <- taskFinishedMsg{Success: false, Err: err}
 		return
 	}
 	cmd.Stderr = cmd.Stdout
 
 	if err := cmd.Start(); err != nil {
-		r.msgChan <- logLineMsg(fmt.Sprintf(">>> Failed to start process: %v", err))
+		r.msgChan <- logLineMsg(fmt.Sprintf("✗ Failed to start process: %v", err))
 		r.msgChan <- taskFinishedMsg{Success: false, Err: err}
 		return
 	}
@@ -52,7 +52,7 @@ func (r *RuntimeState) runProcessAndStreamLogs(root, command string, args []stri
 
 	err = cmd.Wait()
 	if err != nil {
-		r.msgChan <- logLineMsg(fmt.Sprintf(">>> Command failed: %v", err))
+		r.msgChan <- logLineMsg(fmt.Sprintf("✗ Command failed: %v", err))
 	}
 	r.msgChan <- taskFinishedMsg{Success: err == nil, Err: err}
 }
@@ -63,13 +63,13 @@ func (r *RuntimeState) runProcessAndStreamLogsSilent(root, command string, args 
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		r.msgChan <- logLineMsg(fmt.Sprintf(">>> Failed to pipe stdout: %v", err))
+		r.msgChan <- logLineMsg(fmt.Sprintf("✗ Failed to pipe stdout: %v", err))
 		return err
 	}
 	cmd.Stderr = cmd.Stdout
 
 	if err := cmd.Start(); err != nil {
-		r.msgChan <- logLineMsg(fmt.Sprintf(">>> Failed to start process: %v", err))
+		r.msgChan <- logLineMsg(fmt.Sprintf("✗ Failed to start process: %v", err))
 		return err
 	}
 
@@ -84,19 +84,61 @@ func (r *RuntimeState) runProcessAndStreamLogsSilent(root, command string, args 
 
 	err = cmd.Wait()
 	if err != nil {
-		r.msgChan <- logLineMsg(fmt.Sprintf(">>> Command failed: %v", err))
+		r.msgChan <- logLineMsg(fmt.Sprintf("✗ Command failed: %v", err))
 	}
 	return err
 }
 
 func (m *TuiModel) RunSetupTask(adds map[string]string) {
+	// If this is a new setup run (not in progress), initialize/reset fields
+	if !m.setupInProgress {
+		m.setupInProgress = true
+		m.setupStep = 0
+		m.setupAdds = make(map[string]string)
+		m.setupCloned = make(map[string]bool)
+
+		cloneCount := 0
+		for _, method := range adds {
+			if method == "git-https" || method == "git-ssh" {
+				cloneCount++
+			}
+		}
+		m.setupTotalSteps = cloneCount + 2
+	} else {
+		cloneCount := 0
+		for _, method := range adds {
+			if method == "git-https" || method == "git-ssh" {
+				cloneCount++
+			}
+		}
+		m.setupTotalSteps += cloneCount
+	}
+
+	// Merge adds into setupAdds
+	for pkg, method := range adds {
+		m.setupAdds[pkg] = method
+	}
+
 	workspaceRoot := m.workspaceRoot
 	msgChan := m.runtime.msgChan
 	runtime := m.runtime
+	startStep := m.setupStep
+	totalSteps := m.setupTotalSteps
 
-	var githubUser string
-	if m.ctx != nil && m.ctx.Settings.GithubUser != nil {
-		githubUser = *m.ctx.Settings.GithubUser
+	// Capture setupAdds and setupCloned
+	allSetupAdds := make(map[string]string)
+	for k, v := range m.setupAdds {
+		allSetupAdds[k] = v
+	}
+	allSetupCloned := make(map[string]bool)
+	for k, v := range m.setupCloned {
+		allSetupCloned[k] = v
+	}
+
+	// Capture adds to process in this run
+	currentBatch := make(map[string]string)
+	for k, v := range adds {
+		currentBatch[k] = v
 	}
 
 	var catalogEntries []bridge.CatalogEntry
@@ -106,33 +148,30 @@ func (m *TuiModel) RunSetupTask(adds map[string]string) {
 	}
 
 	go func() {
-		totalSteps := len(adds) + 2 // N clones + pnpm install + prepare:modules
-		step := 0
+		step := startStep
 		msgChan <- setupProgressMsg{Step: step, Total: totalSteps, Label: "Initializing…"}
 
-		// clonedDirs tracks successfully cloned target directories for dep scanning
+		// clonedDirs tracks successfully cloned target directories for dep scanning in this batch
 		type clonedInfo struct {
 			shortName string
 			targetDir string
+			pkgName   string
 		}
 		var clonedDirs []clonedInfo
 
-		// ── Phase 1: Clone each package ──────────────────────────────────────
-		for pkgName, method := range adds {
-			step++
+		// ── Phase 1: Clone each package in the current batch ──────────────────
+		for pkgName, method := range currentBatch {
 			shortName := pkgName
 			if idx := strings.LastIndex(pkgName, "/"); idx >= 0 {
 				shortName = pkgName[idx+1:]
 			}
 
-			msgChan <- setupProgressMsg{Step: step, Total: totalSteps, Label: fmt.Sprintf("Cloning %s…", shortName)}
-
 			if method == "npm" {
-				msgChan <- logLineMsg(fmt.Sprintf(">>> %s will be installed via npm (pnpm install)", shortName))
+				msgChan <- logLineMsg(fmt.Sprintf("ℹ %s will be installed via npm (pnpm install)", shortName))
 				continue
 			}
 			if method == "local" {
-				msgChan <- logLineMsg(fmt.Sprintf(">>> %s already available as local workspace package", shortName))
+				msgChan <- logLineMsg(fmt.Sprintf("ℹ %s already available as local workspace package", shortName))
 				continue
 			}
 
@@ -142,13 +181,16 @@ func (m *TuiModel) RunSetupTask(adds map[string]string) {
 
 			// Skip if already cloned
 			if _, err := os.Stat(filepath.Join(targetDir, "package.json")); err == nil {
-				msgChan <- logLineMsg(fmt.Sprintf(">>> %s already cloned — skipping", shortName))
-				clonedDirs = append(clonedDirs, clonedInfo{shortName, targetDir})
+				msgChan <- logLineMsg(fmt.Sprintf("ℹ %s already cloned — skipping", shortName))
+				clonedDirs = append(clonedDirs, clonedInfo{shortName, targetDir, pkgName})
 				continue
 			}
 
-			// Resolve git URL (use githubUser if set, else owdproject/catalog org)
-			owner := resolveOwner(pkgName, githubUser, catalogEntries)
+			step++
+			msgChan <- setupProgressMsg{Step: step, Total: totalSteps, Label: fmt.Sprintf("Cloning %s…", shortName)}
+
+			// Resolve git URL
+			owner := resolveOwner(pkgName, catalogEntries)
 			var gitURL string
 			if method == "git-ssh" {
 				gitURL = fmt.Sprintf("git@github.com:%s/%s.git", owner, shortName)
@@ -156,28 +198,36 @@ func (m *TuiModel) RunSetupTask(adds map[string]string) {
 				gitURL = fmt.Sprintf("https://github.com/%s/%s.git", owner, shortName)
 			}
 
-			msgChan <- logLineMsg(fmt.Sprintf(">>> Cloning %s from %s", shortName, gitURL))
+			msgChan <- logLineMsg(fmt.Sprintf("ℹ Cloning %s from %s", shortName, gitURL))
 			if err := runtime.runProcessAndStreamLogsSilent(workspaceRoot, "git", []string{"clone", gitURL, targetDir}); err != nil {
-				msgChan <- logLineMsg(fmt.Sprintf(">>> Clone failed for %s: %v", shortName, err))
+				msgChan <- logLineMsg(fmt.Sprintf("✗ Clone failed for %s: %v", shortName, err))
 				msgChan <- taskFinishedMsg{Success: false, Err: err}
 				return
 			}
-			msgChan <- logLineMsg(fmt.Sprintf(">>> ✓ %s cloned", shortName))
-			clonedDirs = append(clonedDirs, clonedInfo{shortName, targetDir})
+			msgChan <- logLineMsg(fmt.Sprintf("✓ %s cloned", shortName))
+			clonedDirs = append(clonedDirs, clonedInfo{shortName, targetDir, pkgName})
 		}
+
+		msgChan <- setupProgressMsg{Step: step, Total: totalSteps, Label: "Scanning package dependencies…"}
 
 		// ── Phase 1.5: Scan cloned packages for kit-* / module-* deps ────────
-		type depToClone struct {
-			shortName string
-			targetDir string
-			gitURL    string
-		}
-		var extraDeps []depToClone
+		var newlyDiscovered []string
 		seenDep := map[string]bool{}
 
-		// Mark packages already cloned or locally present as seen
-		for _, ci := range clonedDirs {
-			seenDep[ci.shortName] = true
+		// Mark packages already cloned/cloning as seen
+		for k := range allSetupAdds {
+			short := k
+			if idx := strings.LastIndex(k, "/"); idx >= 0 {
+				short = k[idx+1:]
+			}
+			seenDep[short] = true
+		}
+		for k := range allSetupCloned {
+			short := k
+			if idx := strings.LastIndex(k, "/"); idx >= 0 {
+				short = k[idx+1:]
+			}
+			seenDep[short] = true
 		}
 		for _, e := range catalogEntries {
 			if e.LocalSource {
@@ -224,41 +274,29 @@ func (m *TuiModel) RunSetupTask(adds map[string]string) {
 					seenDep[depShort] = true
 					continue
 				}
-				// Always clone deps from owdproject via HTTPS (no fork needed)
-				gitURL := fmt.Sprintf("https://github.com/owdproject/%s.git", depShort)
-				extraDeps = append(extraDeps, depToClone{depShort, depTarget, gitURL})
+
+				newlyDiscovered = append(newlyDiscovered, depName)
 				seenDep[depShort] = true
-				msgChan <- logLineMsg(fmt.Sprintf(">>> Detected required dep: %s", depShort))
+				msgChan <- logLineMsg(fmt.Sprintf("ℹ Detected required dep: %s", depShort))
 			}
 		}
 
-		// Extend progress bar if deps were found
-		if len(extraDeps) > 0 {
-			totalSteps += len(extraDeps)
-			msgChan <- setupProgressMsg{
-				Step:  step,
-				Total: totalSteps,
-				Label: fmt.Sprintf("Found %d additional dependenc%s…",
-					len(extraDeps), map[bool]string{true: "y", false: "ies"}[len(extraDeps) == 1]),
-			}
+		// Report cloned packages and detected dependencies back to main thread
+		var clonedPkgNames []string
+		for _, ci := range clonedDirs {
+			clonedPkgNames = append(clonedPkgNames, ci.pkgName)
+		}
+		msgChan <- setupClonedMsg{Cloned: clonedPkgNames, Step: step}
 
-			for _, dep := range extraDeps {
-				step++
-				msgChan <- setupProgressMsg{Step: step, Total: totalSteps, Label: fmt.Sprintf("Cloning %s…", dep.shortName)}
-				msgChan <- logLineMsg(fmt.Sprintf(">>> Cloning dep %s from %s", dep.shortName, dep.gitURL))
-				if err := runtime.runProcessAndStreamLogsSilent(workspaceRoot, "git", []string{"clone", dep.gitURL, dep.targetDir}); err != nil {
-					// Warn but don't abort — dep might be optional or already linked via npm
-					msgChan <- logLineMsg(fmt.Sprintf(">>> Warning: could not clone %s: %v", dep.shortName, err))
-				} else {
-					msgChan <- logLineMsg(fmt.Sprintf(">>> ✓ %s cloned", dep.shortName))
-				}
-			}
+		if len(newlyDiscovered) > 0 {
+			msgChan <- depsDetectedMsg{Deps: newlyDiscovered}
+			return
 		}
 
 		// ── Phase 2: pnpm install ─────────────────────────────────────────────
 		step++
 		msgChan <- setupProgressMsg{Step: step, Total: totalSteps, Label: "Installing dependencies (pnpm install)…"}
-		msgChan <- logLineMsg(">>> Running pnpm install (syncing workspace)…")
+		msgChan <- logLineMsg("ℹ Running pnpm install (syncing workspace)…")
 		if err := runtime.runProcessAndStreamLogsSilent(workspaceRoot, "pnpm", []string{"install"}); err != nil {
 			msgChan <- taskFinishedMsg{Success: false, Err: err}
 			return
@@ -267,7 +305,7 @@ func (m *TuiModel) RunSetupTask(adds map[string]string) {
 		// ── Phase 3: Rebuild stubs ────────────────────────────────────────────
 		step++
 		msgChan <- setupProgressMsg{Step: step, Total: totalSteps, Label: "Rebuilding stubs (prepare:modules)…"}
-		msgChan <- logLineMsg(">>> Rebuilding stubs…")
+		msgChan <- logLineMsg("ℹ Rebuilding stubs…")
 		if err := runtime.runProcessAndStreamLogsSilent(workspaceRoot, "pnpm", []string{"run", "prepare:modules"}); err != nil {
 			msgChan <- taskFinishedMsg{Success: false, Err: err}
 			return
@@ -309,15 +347,20 @@ func kindDirForShortName(shortName string) string {
 }
 
 // resolveOwner returns the GitHub owner to use for cloning.
-// Priority: explicit githubUser setting > catalog org > "owdproject".
-func resolveOwner(pkgName, githubUser string, entries []bridge.CatalogEntry) string {
-	if githubUser != "" {
-		return githubUser
-	}
-	for _, e := range entries {
-		if e.Name == pkgName && e.Org != "" {
-			return e.Org
+// Priority: fork owner (if fork is confirmed to exist) > catalog org > "owdproject".
+func resolveOwner(pkgName string, entries []bridge.CatalogEntry) string {
+	var entry *bridge.CatalogEntry
+	for i := range entries {
+		if entries[i].Name == pkgName {
+			entry = &entries[i]
+			break
 		}
+	}
+	if entry != nil && entry.SourcesMeta != nil && entry.SourcesMeta.Github.Fork != nil && entry.SourcesMeta.Github.Fork.Exists && entry.SourcesMeta.Github.Fork.IsFork {
+		return entry.SourcesMeta.Github.Fork.Owner
+	}
+	if entry != nil && entry.Org != "" && entry.Org != "workspace" {
+		return entry.Org
 	}
 	return "owdproject"
 }
@@ -329,7 +372,7 @@ func (m *TuiModel) RunUpdatePackageTask(pkgName string, shortName string, kind s
 
 	go func() {
 		runtime.msgChan <- clearLogsMsg{}
-		runtime.msgChan <- logLineMsg(fmt.Sprintf(">>> Starting update for %s…", shortName))
+		runtime.msgChan <- logLineMsg(fmt.Sprintf("ℹ Starting update for %s…", shortName))
 		runtime.msgChan <- setupProgressMsg{Step: 1, Total: 3, Label: fmt.Sprintf("Updating %s…", shortName)}
 
 		desktopJs := filepath.Join(workspaceRoot, "packages", "cli", "bin", "desktop.js")
@@ -347,18 +390,18 @@ func (m *TuiModel) RunUpdatePackageTask(pkgName string, shortName string, kind s
 
 			if kindDir != "" {
 				pkgPath := filepath.Join(workspaceRoot, kindDir, shortName)
-				runtime.msgChan <- logLineMsg(fmt.Sprintf(">>> Running git pull in %s…", pkgPath))
+				runtime.msgChan <- logLineMsg(fmt.Sprintf("ℹ Running git pull in %s…", pkgPath))
 				if err := runtime.runProcessAndStreamLogsSilent(pkgPath, "git", []string{"pull"}); err != nil {
-					runtime.msgChan <- logLineMsg(fmt.Sprintf(">>> Git pull failed: %v", err))
+					runtime.msgChan <- logLineMsg(fmt.Sprintf("✗ Git pull failed: %v", err))
 					runtime.msgChan <- taskFinishedMsg{Success: false, Err: err}
 					return
 				}
 			}
 		} else {
-			runtime.msgChan <- logLineMsg(fmt.Sprintf(">>> Re-installing %s from NPM to get latest version…", shortName))
+			runtime.msgChan <- logLineMsg(fmt.Sprintf("ℹ Re-installing %s from NPM to get latest version…", shortName))
 			args := []string{desktopJs, "add", shortName, "--npm"}
 			if err := runtime.runProcessAndStreamLogsSilent(workspaceRoot, "node", args); err != nil {
-				runtime.msgChan <- logLineMsg(fmt.Sprintf(">>> NPM update failed: %v", err))
+				runtime.msgChan <- logLineMsg(fmt.Sprintf("✗ NPM update failed: %v", err))
 				runtime.msgChan <- taskFinishedMsg{Success: false, Err: err}
 				return
 			}
@@ -366,7 +409,7 @@ func (m *TuiModel) RunUpdatePackageTask(pkgName string, shortName string, kind s
 
 		// Run pnpm install
 		runtime.msgChan <- setupProgressMsg{Step: 2, Total: 3, Label: "Installing dependencies (pnpm install)…"}
-		runtime.msgChan <- logLineMsg(">>> Running pnpm install (syncing workspace)…")
+		runtime.msgChan <- logLineMsg("ℹ Running pnpm install (syncing workspace)…")
 		if err := runtime.runProcessAndStreamLogsSilent(workspaceRoot, "pnpm", []string{"install"}); err != nil {
 			runtime.msgChan <- taskFinishedMsg{Success: false, Err: err}
 			return
@@ -374,7 +417,7 @@ func (m *TuiModel) RunUpdatePackageTask(pkgName string, shortName string, kind s
 
 		// Rebuild stubs
 		runtime.msgChan <- setupProgressMsg{Step: 3, Total: 3, Label: "Rebuilding stubs (prepare:modules)…"}
-		runtime.msgChan <- logLineMsg(">>> Rebuilding stubs…")
+		runtime.msgChan <- logLineMsg("ℹ Rebuilding stubs…")
 		if err := runtime.runProcessAndStreamLogsSilent(workspaceRoot, "pnpm", []string{"run", "prepare:modules"}); err != nil {
 			runtime.msgChan <- taskFinishedMsg{Success: false, Err: err}
 			return
@@ -410,13 +453,13 @@ func (m *TuiModel) RunServeTask() {
 		logPath := filepath.Join(metaDir, "dev.log")
 		logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 		if err != nil {
-			runtime.msgChan <- logLineMsg(fmt.Sprintf(">>> Failed to open log file: %v", err))
+			runtime.msgChan <- logLineMsg(fmt.Sprintf("✗ Failed to open log file: %v", err))
 			runtime.msgChan <- serverStatusMsg{Running: false}
 			return
 		}
 		defer logFile.Close()
 
-		logFile.WriteString(">>> Starting Nuxt dev server (pnpm run dev)…\n")
+		logFile.WriteString("ℹ Starting Nuxt dev server (pnpm run dev)…\n")
 
 		cmd := exec.Command("pnpm", "run", "dev")
 		if isPlayground {
@@ -438,7 +481,7 @@ func (m *TuiModel) RunServeTask() {
 		runtime.serverMu.Unlock()
 
 		if err := cmd.Start(); err != nil {
-			logFile.WriteString(fmt.Sprintf(">>> Server failed to start: %v\n", err))
+			logFile.WriteString(fmt.Sprintf("✗ Server failed to start: %v\n", err))
 			runtime.msgChan <- serverStatusMsg{Running: false}
 			return
 		}
@@ -450,13 +493,44 @@ func (m *TuiModel) RunServeTask() {
 		runtime.msgChan <- serverStatusMsg{Running: true}
 
 		cmd.Wait()
-		logFile.WriteString(">>> Dev server exited.\n")
+		logFile.WriteString("ℹ Dev server exited.\n")
 		runtime.msgChan <- serverStatusMsg{Running: false}
 
 		runtime.serverMu.Lock()
 		runtime.serverCmd = nil
 		runtime.serverMu.Unlock()
 	}()
+}
+
+func stopServeTaskSync(workspaceRoot, metaDir string, runtime *RuntimeState) {
+	if metaDir == "" {
+		runtime.msgChan <- serverStatusMsg{Running: false}
+		return
+	}
+
+	runtime.serverMu.Lock()
+	cmd := runtime.serverCmd
+	runtime.serverCmd = nil
+	runtime.serverMu.Unlock()
+
+	if cmd != nil && cmd.Process != nil {
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	}
+
+	pidPath := filepath.Join(metaDir, "dev.pid")
+	if data, err := os.ReadFile(pidPath); err == nil {
+		var pid int
+		if _, err := fmt.Sscanf(strings.TrimSpace(string(data)), "%d", &pid); err == nil && pid > 0 {
+			_ = syscall.Kill(-pid, syscall.SIGKILL)
+			_ = syscall.Kill(pid, syscall.SIGKILL)
+		}
+		_ = os.Remove(pidPath)
+	}
+
+	// Safe, scoped process cleanup targeting processes for this workspace
+	killWorkspaceProcesses(workspaceRoot)
+
+	runtime.msgChan <- serverStatusMsg{Running: false}
 }
 
 func (m *TuiModel) StopServeTask() {
@@ -468,34 +542,7 @@ func (m *TuiModel) StopServeTask() {
 	runtime := m.runtime
 
 	go func() {
-		if metaDir == "" {
-			runtime.msgChan <- serverStatusMsg{Running: false}
-			return
-		}
-
-		runtime.serverMu.Lock()
-		cmd := runtime.serverCmd
-		runtime.serverCmd = nil
-		runtime.serverMu.Unlock()
-
-		if cmd != nil && cmd.Process != nil {
-			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-		}
-
-		pidPath := filepath.Join(metaDir, "dev.pid")
-		if data, err := os.ReadFile(pidPath); err == nil {
-			var pid int
-			if _, err := fmt.Sscanf(strings.TrimSpace(string(data)), "%d", &pid); err == nil && pid > 0 {
-				_ = syscall.Kill(-pid, syscall.SIGKILL)
-				_ = syscall.Kill(pid, syscall.SIGKILL)
-			}
-			_ = os.Remove(pidPath)
-		}
-
-		// Safe, scoped process cleanup targeting processes for this workspace
-		killWorkspaceProcesses(workspaceRoot)
-
-		runtime.msgChan <- serverStatusMsg{Running: false}
+		stopServeTaskSync(workspaceRoot, metaDir, runtime)
 	}()
 }
 
@@ -613,7 +660,7 @@ func (m *TuiModel) RunWipeWorkspaceTask() {
 
 	go func() {
 		runtime.msgChan <- clearLogsMsg{}
-		runtime.msgChan <- logLineMsg(">>> Starting workspace reset task…")
+		runtime.msgChan <- logLineMsg("ℹ Starting workspace reset task…")
 
 		totalSteps := 7
 		step := 0
@@ -621,9 +668,9 @@ func (m *TuiModel) RunWipeWorkspaceTask() {
 		// Step 1: Clean apps/
 		step++
 		runtime.msgChan <- setupProgressMsg{Step: step, Total: totalSteps, Label: "Cleaning apps directory…"}
-		runtime.msgChan <- logLineMsg(">>> Cleaning apps/ directory…")
+		runtime.msgChan <- logLineMsg("ℹ Cleaning apps/ directory…")
 		if err := wipeDirectory(filepath.Join(workspaceRoot, "apps"), nil); err != nil {
-			runtime.msgChan <- logLineMsg(fmt.Sprintf(">>> Error cleaning apps: %v", err))
+			runtime.msgChan <- logLineMsg(fmt.Sprintf("✗ Error cleaning apps: %v", err))
 			runtime.msgChan <- taskFinishedMsg{Success: false, Err: err}
 			return
 		}
@@ -631,9 +678,9 @@ func (m *TuiModel) RunWipeWorkspaceTask() {
 		// Step 2: Clean themes/
 		step++
 		runtime.msgChan <- setupProgressMsg{Step: step, Total: totalSteps, Label: "Cleaning themes directory…"}
-		runtime.msgChan <- logLineMsg(">>> Cleaning themes/ directory…")
+		runtime.msgChan <- logLineMsg("ℹ Cleaning themes/ directory…")
 		if err := wipeDirectory(filepath.Join(workspaceRoot, "themes"), nil); err != nil {
-			runtime.msgChan <- logLineMsg(fmt.Sprintf(">>> Error cleaning themes: %v", err))
+			runtime.msgChan <- logLineMsg(fmt.Sprintf("✗ Error cleaning themes: %v", err))
 			runtime.msgChan <- taskFinishedMsg{Success: false, Err: err}
 			return
 		}
@@ -641,10 +688,10 @@ func (m *TuiModel) RunWipeWorkspaceTask() {
 		// Step 3: Clean packages/ (preserving core, cli, nx)
 		step++
 		runtime.msgChan <- setupProgressMsg{Step: step, Total: totalSteps, Label: "Cleaning packages directory…"}
-		runtime.msgChan <- logLineMsg(">>> Cleaning packages/ directory (preserving core, cli, nx)…")
+		runtime.msgChan <- logLineMsg("ℹ Cleaning packages/ directory (preserving core, cli, nx)…")
 		preservePkgs := map[string]bool{"core": true, "cli": true, "nx": true}
 		if err := wipeDirectory(filepath.Join(workspaceRoot, "packages"), preservePkgs); err != nil {
-			runtime.msgChan <- logLineMsg(fmt.Sprintf(">>> Error cleaning packages: %v", err))
+			runtime.msgChan <- logLineMsg(fmt.Sprintf("✗ Error cleaning packages: %v", err))
 			runtime.msgChan <- taskFinishedMsg{Success: false, Err: err}
 			return
 		}
@@ -652,7 +699,7 @@ func (m *TuiModel) RunWipeWorkspaceTask() {
 		// Step 4: Reset desktop.config.ts
 		step++
 		runtime.msgChan <- setupProgressMsg{Step: step, Total: totalSteps, Label: "Resetting desktop config…"}
-		runtime.msgChan <- logLineMsg(">>> Resetting desktop/desktop.config.ts to default…")
+		runtime.msgChan <- logLineMsg("ℹ Resetting desktop/desktop.config.ts to default…")
 		defaultConfig := `import { defineDesktopConfig } from '@owdproject/core'
 
 export default defineDesktopConfig({
@@ -663,7 +710,7 @@ export default defineDesktopConfig({
 `
 		configPath := filepath.Join(workspaceRoot, "desktop", "desktop.config.ts")
 		if err := os.WriteFile(configPath, []byte(defaultConfig), 0644); err != nil {
-			runtime.msgChan <- logLineMsg(fmt.Sprintf(">>> Error resetting desktop config: %v", err))
+			runtime.msgChan <- logLineMsg(fmt.Sprintf("✗ Error resetting desktop config: %v", err))
 			runtime.msgChan <- taskFinishedMsg{Success: false, Err: err}
 			return
 		}
@@ -671,7 +718,7 @@ export default defineDesktopConfig({
 		// Step 5: Reset package.json
 		step++
 		runtime.msgChan <- setupProgressMsg{Step: step, Total: totalSteps, Label: "Resetting package dependencies…"}
-		runtime.msgChan <- logLineMsg(">>> Resetting desktop/package.json dependencies to core only…")
+		runtime.msgChan <- logLineMsg("ℹ Resetting desktop/package.json dependencies to core only…")
 		defaultPackageJson := `{
   "name": "@owdproject/client",
   "private": true,
@@ -693,7 +740,7 @@ export default defineDesktopConfig({
 `
 		pkgJsonPath := filepath.Join(workspaceRoot, "desktop", "package.json")
 		if err := os.WriteFile(pkgJsonPath, []byte(defaultPackageJson), 0644); err != nil {
-			runtime.msgChan <- logLineMsg(fmt.Sprintf(">>> Error resetting package.json: %v", err))
+			runtime.msgChan <- logLineMsg(fmt.Sprintf("✗ Error resetting package.json: %v", err))
 			runtime.msgChan <- taskFinishedMsg{Success: false, Err: err}
 			return
 		}
@@ -701,9 +748,9 @@ export default defineDesktopConfig({
 		// Step 6: Run pnpm install
 		step++
 		runtime.msgChan <- setupProgressMsg{Step: step, Total: totalSteps, Label: "Installing dependencies (pnpm install)…"}
-		runtime.msgChan <- logLineMsg(">>> Running pnpm install (syncing workspace)…")
+		runtime.msgChan <- logLineMsg("ℹ Running pnpm install (syncing workspace)…")
 		if err := runtime.runProcessAndStreamLogsSilent(workspaceRoot, "pnpm", []string{"install"}); err != nil {
-			runtime.msgChan <- logLineMsg(fmt.Sprintf(">>> Error running pnpm install: %v", err))
+			runtime.msgChan <- logLineMsg(fmt.Sprintf("✗ Error running pnpm install: %v", err))
 			runtime.msgChan <- taskFinishedMsg{Success: false, Err: err}
 			return
 		}
@@ -711,9 +758,9 @@ export default defineDesktopConfig({
 		// Step 7: Run prepare:modules
 		step++
 		runtime.msgChan <- setupProgressMsg{Step: step, Total: totalSteps, Label: "Rebuilding stubs (prepare:modules)…"}
-		runtime.msgChan <- logLineMsg(">>> Rebuilding stubs…")
+		runtime.msgChan <- logLineMsg("ℹ Rebuilding stubs…")
 		if err := runtime.runProcessAndStreamLogsSilent(workspaceRoot, "pnpm", []string{"run", "prepare:modules"}); err != nil {
-			runtime.msgChan <- logLineMsg(fmt.Sprintf(">>> Error running prepare:modules: %v", err))
+			runtime.msgChan <- logLineMsg(fmt.Sprintf("✗ Error running prepare:modules: %v", err))
 			runtime.msgChan <- taskFinishedMsg{Success: false, Err: err}
 			return
 		}

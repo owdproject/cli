@@ -44,8 +44,7 @@ func (m *TuiModel) handlePromptKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if msg.String() == "esc" || msg.String() == "q" {
 			m.activePrompt = PromptNone
 			m.promptPkg = nil
-			m.promptQueue = nil
-			m.promptQueueIndex = 0
+			m.wizard = nil
 			m.activeThemeDep = ""
 		}
 		return m, nil
@@ -160,13 +159,13 @@ func (m *TuiModel) handleSettingsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 						Settings: &settings,
 					}
 					m.statusMsg = "Saving settings…"
-					m.addLog(">>> Saving settings configuration…")
+					m.addLog("ℹ Saving settings configuration…")
 					if err := bridge.WriteChanges(m.workspaceRoot, payload); err != nil {
 						m.statusMsg = fmt.Sprintf("Save failed: %v", err)
-						m.addLog(fmt.Sprintf(">>> Save settings failed: %v", err))
+						m.addLog(fmt.Sprintf("✗ Save settings failed: %v", err))
 					} else {
 						m.statusMsg = "Settings saved successfully."
-						m.addLog(">>> Settings saved successfully.")
+						m.addLog("✓ Settings saved successfully.")
 					}
 				}
 				m.loading = true
@@ -238,9 +237,9 @@ func (m *TuiModel) handleUninstallConfirmKeys(msg tea.KeyMsg) (tea.Model, tea.Cm
 	case "esc", "q":
 		m.activePrompt = PromptNone
 		m.promptPkg = nil
-		m.promptQueue = nil
-		m.promptQueueIndex = 0
+		m.wizard = nil
 		m.startServerAfterSetup = false
+		m.addLog("✗ Wizard aborted by user")
 		return m, nil
 	case "left", "h", "up", "k":
 		m.promptSel = 0
@@ -248,11 +247,15 @@ func (m *TuiModel) handleUninstallConfirmKeys(msg tea.KeyMsg) (tea.Model, tea.Cm
 		m.promptSel = 1
 	case "enter":
 		pkg := m.promptPkg
-		if len(m.promptQueue) > 0 {
+		if m.wizard != nil && !m.wizard.IsComplete() {
 			if m.promptSel == 0 { // Yes
-				m.finalizedRemoves = append(m.finalizedRemoves, pkg.Name)
+				m.wizard.ResolveCurrentUninstall(true)
+				m.addLog(fmt.Sprintf("✓ Wizard Step Resolved: Uninstall %s confirmed", pkg.Name))
+			} else {
+				m.wizard.ResolveCurrentUninstall(false)
+				m.addLog(fmt.Sprintf("✓ Wizard Step Resolved: Uninstall %s skipped/declined", pkg.Name))
 			}
-			m.promptQueueIndex++
+			m.wizard.Next()
 			return m, m.processNextQueueDecision()
 		}
 
@@ -278,9 +281,9 @@ func (m *TuiModel) handleInstallMethodKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) 
 	case "esc", "q":
 		m.activePrompt = PromptNone
 		m.promptPkg = nil
-		m.promptQueue = nil
-		m.promptQueueIndex = 0
+		m.wizard = nil
 		m.startServerAfterSetup = false
+		m.addLog("✗ Wizard aborted by user")
 		return m, nil
 	case "up", "k":
 		if m.promptSel > 0 {
@@ -293,10 +296,11 @@ func (m *TuiModel) handleInstallMethodKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) 
 	case "enter":
 		if m.promptSel >= 0 && m.promptSel < methodsCount {
 			selectedMethod := methods[m.promptSel].Name
-			if len(m.promptQueue) > 0 {
+			if m.wizard != nil && !m.wizard.IsComplete() {
 				m.lastInstallMethod = selectedMethod
-				m.finalizedAdds[pkg.Name] = selectedMethod
-				m.promptQueueIndex++
+				m.wizard.ResolveCurrentInstall(selectedMethod)
+				m.addLog(fmt.Sprintf("✓ Wizard Step Resolved: Install %s via %s", pkg.Name, selectedMethod))
+				m.wizard.Next()
 				return m, m.processNextQueueDecision()
 			}
 
@@ -344,7 +348,7 @@ func (m *TuiModel) handleWipeWorkspaceConfirmKeys(msg tea.KeyMsg) (tea.Model, te
 			m.activePrompt = PromptNone
 			m.activeTask = TaskWipe
 			m.statusMsg = "Resetting workspace…"
-			m.addLog(">>> Initiating workspace reset task…")
+			m.addLog("ℹ Initiating workspace reset task…")
 			return m, m.runWipeWorkspaceCmd()
 		} else { // No
 			m.activePrompt = PromptSettings
@@ -361,7 +365,7 @@ func (m *TuiModel) handleWipeWorkspaceConfirmKeys(msg tea.KeyMsg) (tea.Model, te
 func (m *TuiModel) triggerUninstall(pkg *bridge.CatalogEntry) (tea.Model, tea.Cmd) {
 	m.activeTask = TaskSetup
 	m.statusMsg = fmt.Sprintf("Uninstalling %s…", pkg.ShortName)
-	m.addLog(fmt.Sprintf(">>> Uninstalling %s", pkg.Name))
+	m.addLog(fmt.Sprintf("⚙ Selected Option: Uninstall package %s", pkg.Name))
 
 	payload := &bridge.WritePayload{
 		Config:       &bridge.Config{Theme: m.ctx.Config.Theme, Apps: m.ctx.Config.Apps, Modules: m.ctx.Config.Modules},
@@ -400,7 +404,7 @@ func (m *TuiModel) triggerUninstall(pkg *bridge.CatalogEntry) (tea.Model, tea.Cm
 func (m *TuiModel) triggerInstall(pkg *bridge.CatalogEntry, method string) (tea.Model, tea.Cmd) {
 	m.activeTask = TaskSetup
 	m.statusMsg = fmt.Sprintf("Installing %s via %s…", pkg.ShortName, method)
-	m.addLog(fmt.Sprintf(">>> Installing %s via %s", pkg.Name, method))
+	m.addLog(fmt.Sprintf("⚙ Selected Option: Install package %s via %s", pkg.Name, method))
 	m.justInstalledAdds = map[string]string{pkg.Name: method}
 
 	payload := &bridge.WritePayload{
@@ -417,15 +421,12 @@ func (m *TuiModel) triggerInstall(pkg *bridge.CatalogEntry, method string) (tea.
 	} else if method == "local" {
 		payload.DepsToAdd[pkg.Name] = "workspace:*"
 	} else {
-		user := "owdproject"
-		if m.ctx.Settings.GithubUser != nil && *m.ctx.Settings.GithubUser != "" {
-			user = *m.ctx.Settings.GithubUser
-		}
+		owner := m.resolveOwner(pkg.Name)
 		var gitUrl string
 		if method == "git-ssh" {
-			gitUrl = fmt.Sprintf("git@github.com:%s/%s.git", user, pkg.ShortName)
+			gitUrl = fmt.Sprintf("git@github.com:%s/%s.git", owner, pkg.ShortName)
 		} else {
-			gitUrl = fmt.Sprintf("https://github.com/%s/%s.git", user, pkg.ShortName)
+			gitUrl = fmt.Sprintf("https://github.com/%s/%s.git", owner, pkg.ShortName)
 		}
 		payload.DepsToAdd[pkg.Name] = "workspace:*"
 		settings := m.ctx.Settings
@@ -456,7 +457,7 @@ func (m *TuiModel) triggerInstall(pkg *bridge.CatalogEntry, method string) (tea.
 func (m *TuiModel) triggerForceReinstall(pkg *bridge.CatalogEntry) (tea.Model, tea.Cmd) {
 	m.activeTask = TaskSetup
 	m.statusMsg = fmt.Sprintf("Force reinstalling %s…", pkg.ShortName)
-	m.addLog(fmt.Sprintf(">>> Deleting local folder and reinstalling %s", pkg.Name))
+	m.addLog(fmt.Sprintf("ℹ Deleting local folder and reinstalling %s", pkg.Name))
 
 	// Delete local folder
 	short := pkg.ShortName
@@ -471,7 +472,7 @@ func (m *TuiModel) triggerForceReinstall(pkg *bridge.CatalogEntry) (tea.Model, t
 	}
 	if kindDir != "" {
 		pkgPath := filepath.Join(m.workspaceRoot, kindDir, short)
-		m.addLog(fmt.Sprintf(">>> Removing directory: %s", pkgPath))
+		m.addLog(fmt.Sprintf("ℹ Removing directory: %s", pkgPath))
 		_ = os.RemoveAll(pkgPath)
 	}
 
@@ -501,7 +502,7 @@ func (m *TuiModel) triggerForceReinstall(pkg *bridge.CatalogEntry) (tea.Model, t
 func (m *TuiModel) triggerUpdate(pkg *bridge.CatalogEntry) (tea.Model, tea.Cmd) {
 	m.activeTask = TaskSetup
 	m.statusMsg = fmt.Sprintf("Updating %s…", pkg.ShortName)
-	m.addLog(fmt.Sprintf(">>> Updating %s", pkg.Name))
+	m.addLog(fmt.Sprintf("ℹ Updating %s", pkg.Name))
 
 	workspaceRoot := m.workspaceRoot
 	runtime := m.runtime
@@ -523,18 +524,18 @@ func (m *TuiModel) triggerUpdate(pkg *bridge.CatalogEntry) (tea.Model, tea.Cmd) 
 			pkgPath := filepath.Join(workspaceRoot, kindDir, short)
 			gitDir := filepath.Join(pkgPath, ".git")
 			if _, err := os.Stat(gitDir); err == nil {
-				runtime.msgChan <- logLineMsg(">>> Local Git repository detected. Running git pull…")
+				runtime.msgChan <- logLineMsg("ℹ Local Git repository detected. Running git pull…")
 				runtime.runProcessAndStreamLogs(pkgPath, "git", []string{"pull"})
 				return
 			}
 		}
 
-		runtime.msgChan <- logLineMsg(fmt.Sprintf(">>> Running pnpm install %s@latest…", pkgName))
+		runtime.msgChan <- logLineMsg(fmt.Sprintf("ℹ Running pnpm install %s@latest…", pkgName))
 		if err := runtime.runProcessAndStreamLogsSilent(workspaceRoot, "pnpm", []string{"install", pkgName + "@latest"}); err != nil {
 			runtime.msgChan <- taskFinishedMsg{Success: false, Err: err}
 			return
 		}
-		runtime.msgChan <- logLineMsg(">>> Preparing workspace modules…")
+		runtime.msgChan <- logLineMsg("ℹ Preparing workspace modules…")
 		err := runtime.runProcessAndStreamLogsSilent(workspaceRoot, "pnpm", []string{"run", "prepare:modules"})
 		runtime.msgChan <- taskFinishedMsg{Success: err == nil, Err: err}
 	}()
@@ -546,11 +547,7 @@ func (m *TuiModel) triggerUpdate(pkg *bridge.CatalogEntry) (tea.Model, tea.Cmd) 
 // ─────────────────────────────────────────────
 
 func (m *TuiModel) startStartupCheck() tea.Cmd {
-	m.promptQueue = []pendingDecision{}
-	m.promptQueueIndex = 0
-	m.finalizedAdds = make(map[string]string)
-	m.finalizedRemoves = []string{}
-	m.finalizedTheme = nil
+	var queue []pendingDecision
 
 	if m.catalog == nil {
 		return nil
@@ -567,7 +564,7 @@ func (m *TuiModel) startStartupCheck() tea.Cmd {
 	for _, entry := range m.catalog.Entries {
 		// Package is in config but not yet locally cloned → needs setup
 		if entry.Installed && !entry.LocalSource {
-			m.promptQueue = append(m.promptQueue, pendingDecision{
+			queue = append(queue, pendingDecision{
 				PkgName:   entry.Name,
 				ShortName: entry.ShortName,
 				Action:    "install",
@@ -579,7 +576,7 @@ func (m *TuiModel) startStartupCheck() tea.Cmd {
 	}
 
 	var activeThemeShort string
-	for _, dec := range m.promptQueue {
+	for _, dec := range queue {
 		if dec.Kind == "theme" {
 			activeThemeShort = dec.ShortName
 			break
@@ -628,7 +625,7 @@ func (m *TuiModel) startStartupCheck() tea.Cmd {
 					}
 					entry = &synth
 				}
-				m.promptQueue = append(m.promptQueue, pendingDecision{
+				queue = append(queue, pendingDecision{
 					PkgName:   dep,
 					ShortName: short,
 					Action:    "install",
@@ -640,22 +637,26 @@ func (m *TuiModel) startStartupCheck() tea.Cmd {
 		}
 	}
 
-	if len(m.promptQueue) == 0 {
+	if len(queue) == 0 {
+		m.wizard = nil
 		m.activePrompt = PromptNone
 		return nil
 	}
 
+	m.wizard = NewWizard(queue)
+	m.addLog(fmt.Sprintf("ℹ Starting Startup Check Wizard: %d pending changes to resolve", len(queue)))
 	return m.processNextQueueDecision()
 }
 
 func (m *TuiModel) processNextQueueDecision() tea.Cmd {
-	if m.promptQueueIndex >= len(m.promptQueue) {
+	if m.wizard == nil || m.wizard.IsComplete() {
 		m.activePrompt = PromptNone
+		m.addLog("✓ Wizard completed successfully. Applying changes…")
 		// IMPORTANT: batch with listenToChannel so the setup task's messages are consumed
 		return tea.Batch(m.applyQueueChangesCmd(), m.listenToChannel())
 	}
 
-	dec := m.promptQueue[m.promptQueueIndex]
+	dec := m.wizard.Current()
 	m.promptPkg = &dec.Entry
 
 	if dec.Action == "uninstall" {
@@ -666,8 +667,9 @@ func (m *TuiModel) processNextQueueDecision() tea.Cmd {
 
 	if dec.Kind == "theme" && (dec.Entry.LocalSource || dec.Entry.InPackageJson) {
 		themeName := dec.PkgName
-		m.finalizedTheme = &themeName
-		m.promptQueueIndex++
+		m.wizard.FinalizedTheme = &themeName
+		m.addLog(fmt.Sprintf("✓ Wizard Step Resolved: Theme %s auto-confirmed (already installed)", themeName))
+		m.wizard.Next()
 		return m.processNextQueueDecision()
 	}
 
@@ -699,10 +701,25 @@ func (m *TuiModel) processNextQueueDecision() tea.Cmd {
 func (m *TuiModel) applyQueueChangesCmd() tea.Cmd {
 	m.activeTask = TaskSetup
 	m.statusMsg = "Applying queued package changes…"
-	m.addLog(">>> Applying queued package configuration changes…")
+	m.addLog("ℹ Applying queued package configuration changes…")
+
+	if m.wizard == nil {
+		return nil
+	}
+
+	if m.wizard.FinalizedTheme != nil {
+		m.addLog(fmt.Sprintf("⚙ Selected Option: Activate theme %s", *m.wizard.FinalizedTheme))
+	}
+	for name, method := range m.wizard.FinalizedAdds {
+		m.addLog(fmt.Sprintf("⚙ Selected Option: Install package %s via %s", name, method))
+	}
+	for _, name := range m.wizard.FinalizedRemoves {
+		m.addLog(fmt.Sprintf("⚙ Selected Option: Uninstall package %s", name))
+	}
+
 	// Save adds for post-install dependency checking (phase 2)
 	m.justInstalledAdds = make(map[string]string)
-	for k, v := range m.finalizedAdds {
+	for k, v := range m.wizard.FinalizedAdds {
 		m.justInstalledAdds[k] = v
 	}
 
@@ -712,7 +729,7 @@ func (m *TuiModel) applyQueueChangesCmd() tea.Cmd {
 		DepsToRemove: []string{},
 	}
 
-	for _, name := range m.finalizedRemoves {
+	for _, name := range m.wizard.FinalizedRemoves {
 		payload.DepsToRemove = append(payload.DepsToRemove, name)
 
 		var nextApps []string
@@ -732,14 +749,14 @@ func (m *TuiModel) applyQueueChangesCmd() tea.Cmd {
 		payload.Config.Modules = nextModules
 	}
 
-	for _, name := range m.finalizedRemoves {
+	for _, name := range m.wizard.FinalizedRemoves {
 		if payload.Config.Theme != nil && *payload.Config.Theme == name {
 			e := ""
 			payload.Config.Theme = &e
 		}
 	}
 
-	for name, method := range m.finalizedAdds {
+	for name, method := range m.wizard.FinalizedAdds {
 		var entry *bridge.CatalogEntry
 		if m.catalog != nil {
 			for _, e := range m.catalog.Entries {
@@ -759,10 +776,7 @@ func (m *TuiModel) applyQueueChangesCmd() tea.Cmd {
 		} else if method == "local" {
 			payload.DepsToAdd[name] = "workspace:*"
 		} else {
-			user := "owdproject"
-			if m.ctx != nil && m.ctx.Settings.GithubUser != nil && *m.ctx.Settings.GithubUser != "" {
-				user = *m.ctx.Settings.GithubUser
-			}
+			owner := m.resolveOwner(name)
 			var shortName string
 			if entry != nil {
 				shortName = entry.ShortName
@@ -771,9 +785,9 @@ func (m *TuiModel) applyQueueChangesCmd() tea.Cmd {
 			}
 			var gitUrl string
 			if method == "git-ssh" {
-				gitUrl = fmt.Sprintf("git@github.com:%s/%s.git", user, shortName)
+				gitUrl = fmt.Sprintf("git@github.com:%s/%s.git", owner, shortName)
 			} else {
-				gitUrl = fmt.Sprintf("https://github.com/%s/%s.git", user, shortName)
+				gitUrl = fmt.Sprintf("https://github.com/%s/%s.git", owner, shortName)
 			}
 			payload.DepsToAdd[name] = "workspace:*"
 
@@ -817,20 +831,21 @@ func (m *TuiModel) applyQueueChangesCmd() tea.Cmd {
 		}
 	}
 
-	if m.finalizedTheme != nil {
-		payload.Config.Theme = m.finalizedTheme
+	if m.wizard.FinalizedTheme != nil {
+		payload.Config.Theme = m.wizard.FinalizedTheme
 	}
 
-	finalAdds := m.finalizedAdds
+	finalAdds := m.wizard.FinalizedAdds
 	m.pendingPackages = make(map[string]bool)
 	m.pendingTheme = nil
+	m.wizard = nil
 
 	return func() tea.Msg {
 		if err := bridge.WriteChanges(m.workspaceRoot, payload); err != nil {
 			return taskFinishedMsg{Success: false, Err: err}
 		}
 
-		m.runtime.msgChan <- logLineMsg(">>> Workspace changes written. Starting setup…")
+		m.runtime.msgChan <- logLineMsg("ℹ Workspace changes written. Starting setup…")
 		m.RunSetupTask(finalAdds)
 		return nil
 	}
@@ -839,16 +854,12 @@ func (m *TuiModel) applyQueueChangesCmd() tea.Cmd {
 func (m *TuiModel) runWipeWorkspaceCmd() tea.Cmd {
 	return func() tea.Msg {
 		m.RunWipeWorkspaceTask()
-		return logLineMsg(">>> Wipe workspace task started…")
+		return logLineMsg("ℹ Wipe workspace task started…")
 	}
 }
 
 func (m *TuiModel) startQueueReview() tea.Cmd {
-	m.promptQueue = []pendingDecision{}
-	m.promptQueueIndex = 0
-	m.finalizedAdds = make(map[string]string)
-	m.finalizedRemoves = []string{}
-	m.finalizedTheme = nil
+	var queue []pendingDecision
 
 	for name, on := range m.pendingPackages {
 		var entry *bridge.CatalogEntry
@@ -865,7 +876,7 @@ func (m *TuiModel) startQueueReview() tea.Cmd {
 		}
 
 		if on {
-			m.promptQueue = append(m.promptQueue, pendingDecision{
+			queue = append(queue, pendingDecision{
 				PkgName:   entry.Name,
 				ShortName: entry.ShortName,
 				Action:    "install",
@@ -873,7 +884,7 @@ func (m *TuiModel) startQueueReview() tea.Cmd {
 				Entry:     *entry,
 			})
 		} else {
-			m.promptQueue = append(m.promptQueue, pendingDecision{
+			queue = append(queue, pendingDecision{
 				PkgName:   entry.Name,
 				ShortName: entry.ShortName,
 				Action:    "uninstall",
@@ -894,7 +905,7 @@ func (m *TuiModel) startQueueReview() tea.Cmd {
 			}
 		}
 		if entry != nil {
-			m.promptQueue = append(m.promptQueue, pendingDecision{
+			queue = append(queue, pendingDecision{
 				PkgName:   entry.Name,
 				ShortName: entry.ShortName,
 				Action:    "install",
@@ -906,7 +917,7 @@ func (m *TuiModel) startQueueReview() tea.Cmd {
 
 	// Queue theme dependencies upfront
 	var themeShort string
-	for _, dec := range m.promptQueue {
+	for _, dec := range queue {
 		if dec.Kind == "theme" && dec.Action == "install" {
 			themeShort = dec.ShortName
 			break
@@ -924,9 +935,9 @@ func (m *TuiModel) startQueueReview() tea.Cmd {
 				if nonInstallable[dep] {
 					continue
 				}
-				// Skip if already in finalized Adds/Removes or pending packages
+				// Skip if already in pending queue
 				alreadyQueued := false
-				for _, dec := range m.promptQueue {
+				for _, dec := range queue {
 					if dec.PkgName == dep {
 						alreadyQueued = true
 						break
@@ -965,7 +976,7 @@ func (m *TuiModel) startQueueReview() tea.Cmd {
 					depEntry = &synth
 				}
 
-				m.promptQueue = append(m.promptQueue, pendingDecision{
+				queue = append(queue, pendingDecision{
 					PkgName:   dep,
 					ShortName: short,
 					Action:    "install",
@@ -976,11 +987,14 @@ func (m *TuiModel) startQueueReview() tea.Cmd {
 		}
 	}
 
-	if len(m.promptQueue) == 0 {
+	if len(queue) == 0 {
+		m.wizard = nil
 		m.activePrompt = PromptNone
 		return nil
 	}
 
+	m.wizard = NewWizard(queue)
+	m.addLog(fmt.Sprintf("ℹ Starting Save Queue Review Wizard: %d pending changes to resolve", len(queue)))
 	return m.processNextQueueDecision()
 }
 
@@ -1025,13 +1039,7 @@ func (m *TuiModel) checkPostInstallDeps(justInstalled map[string]string) tea.Cmd
 		}
 	}
 
-	// Reset queue for phase 2
-	m.promptQueue = []pendingDecision{}
-	m.promptQueueIndex = 0
-	m.finalizedAdds = make(map[string]string)
-	m.finalizedRemoves = []string{}
-	m.finalizedTheme = nil
-
+	var queue []pendingDecision
 	queued := map[string]bool{}
 
 	for pkgName := range justInstalled {
@@ -1084,7 +1092,7 @@ func (m *TuiModel) checkPostInstallDeps(justInstalled map[string]string) tea.Cmd
 				}
 			}
 
-			m.promptQueue = append(m.promptQueue, pendingDecision{
+			queue = append(queue, pendingDecision{
 				PkgName:   dep,
 				ShortName: short,
 				Action:    "install",
@@ -1095,11 +1103,12 @@ func (m *TuiModel) checkPostInstallDeps(justInstalled map[string]string) tea.Cmd
 		}
 	}
 
-	if len(m.promptQueue) == 0 {
+	if len(queue) == 0 {
+		m.wizard = nil
 		return nil
 	}
 
-	m.addLog(fmt.Sprintf(">>> Found %d additional dependenc%s to install.",
-		len(m.promptQueue), map[bool]string{true: "y", false: "ies"}[len(m.promptQueue) == 1]))
+	m.wizard = NewWizard(queue)
+	m.addLog(fmt.Sprintf("ℹ Starting Dependencies Review Wizard: %d nested dependencies discovered", len(queue)))
 	return tea.Batch(m.processNextQueueDecision(), m.listenToChannel())
 }

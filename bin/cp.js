@@ -1386,11 +1386,16 @@ export async function runCp(commandName = 'desktop') {
       ? `{${C.accent}-fg}${keyHint('s')} save (${queue}){/}`
       : `${keyHint('s')} save`
 
+    const serverRunning = isDevServerUp()
+    const serverShortcut = serverRunning
+      ? `{${C.accent}-fg}${keyHint('x')} stop server{/}`
+      : `${keyHint('d')} start server`
+
     helpBar.setContent(
       [
         msgLine,
         `  Legend: {${C.add}-fg}[+]{/} add  {${C.remove}-fg}[-]{/} remove  {${C.accent}-fg}[*]{/} on desktop  |  {${C.npm}-fg}NPM{/} registry  {${C.git}-fg}GIT{/} repo  {${C.local}-fg}LOC{/} workspace  |  {${C.warn}-fg}WRN{/} untrusted`,
-        `  Shortcuts: ↑↓ Space toggle  ${keyHint('1')}${keyHint('2')}${keyHint('3')} tabs  ${saveShortcut}  ${keyHint('d')} server  ${keyHint('O')} sort  ${keyHint('m')} menu  ${keyHint('u')} updates  ${keyHint('r')} refresh  ${keyHint('n')} new  ${keyHint('q')} quit`,
+        `  Shortcuts: ↑↓ Space toggle  ${keyHint('1')}${keyHint('2')}${keyHint('3')} tabs  ${saveShortcut}  ${serverShortcut}  ${keyHint('g')} settings  ${keyHint('O')} sort  ${keyHint('m')} menu  ${keyHint('u')} updates  ${keyHint('r')} refresh  ${keyHint('n')} new  ${keyHint('q')} quit`,
       ].join('\n'),
     )
   }
@@ -3495,7 +3500,7 @@ export async function runCp(commandName = 'desktop') {
   startConfigWatcher()
 
   setStatus(
-    `Select packages · ${keyHint('s')} opens install wizard · ${keyHint('u')} updates · ${keyHint('g')} settings · ${keyHint('d')} server`,
+    `Select packages · ${keyHint('s')} opens install wizard · ${keyHint('u')} updates · ${keyHint('d')} start server · ${keyHint('g')} settings`,
     'info',
   )
 
@@ -3504,7 +3509,7 @@ export async function runCp(commandName = 'desktop') {
 
   setInterval(async () => {
     const now = Date.now()
-    if (now - lastShowcaseTime >= 5000) {
+    if (now - lastShowcaseTime >= 15000) {
       showcaseIndex++
       lastShowcaseTime = now
     }

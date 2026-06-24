@@ -858,3 +858,24 @@ func (m *TuiModel) getInstallMethods(pkg *bridge.CatalogEntry) []InstallMethod {
 	return methods
 }
 
+func (m *TuiModel) resolveOwner(pkgName string) string {
+	if m.catalog == nil {
+		return "owdproject"
+	}
+	var entry *bridge.CatalogEntry
+	for i := range m.catalog.Entries {
+		if m.catalog.Entries[i].Name == pkgName {
+			entry = &m.catalog.Entries[i]
+			break
+		}
+	}
+	if entry != nil && entry.SourcesMeta != nil && entry.SourcesMeta.Github.Fork != nil && entry.SourcesMeta.Github.Fork.Exists && entry.SourcesMeta.Github.Fork.IsFork {
+		return entry.SourcesMeta.Github.Fork.Owner
+	}
+	if entry != nil && entry.Org != "" && entry.Org != "workspace" {
+		return entry.Org
+	}
+	return "owdproject"
+}
+
+
