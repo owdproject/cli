@@ -3,6 +3,7 @@ package tui
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -105,12 +106,18 @@ func (m *TuiModel) RunSetupTask(adds map[string]string) {
 	}
 
 	go func() {
-		totalSteps := len(adds) + 2
+		totalSteps := len(adds) + 2 // N clones + pnpm install + prepare:modules
 		step := 0
 		msgChan <- setupProgressMsg{Step: step, Total: totalSteps, Label: "Initializing…"}
 
-		// 1. Clone each package via git directly (bridge.WriteChanges already updated
-		//    package.json and desktop.config.ts, so we just need the git clone)
+		// clonedDirs tracks successfully cloned target directories for dep scanning
+		type clonedInfo struct {
+			shortName string
+			targetDir string
+		}
+		var clonedDirs []clonedInfo
+
+		// ── Phase 1: Clone each package ──────────────────────────────────────
 		for pkgName, method := range adds {
 			step++
 			shortName := pkgName
@@ -121,65 +128,27 @@ func (m *TuiModel) RunSetupTask(adds map[string]string) {
 			msgChan <- setupProgressMsg{Step: step, Total: totalSteps, Label: fmt.Sprintf("Cloning %s…", shortName)}
 
 			if method == "npm" {
-				// npm install: will be handled by pnpm install below; nothing to clone
 				msgChan <- logLineMsg(fmt.Sprintf(">>> %s will be installed via npm (pnpm install)", shortName))
 				continue
 			}
-
 			if method == "local" {
-				// local workspace folder already present; nothing to clone
 				msgChan <- logLineMsg(fmt.Sprintf(">>> %s already available as local workspace package", shortName))
 				continue
 			}
 
-			// Determine target directory based on package kind
-			kindDir := ""
-			for _, e := range catalogEntries {
-				if e.Name == pkgName {
-					switch e.Kind {
-					case "app":
-						kindDir = "apps"
-					case "module":
-						kindDir = "packages"
-					case "theme":
-						kindDir = "themes"
-					}
-					break
-				}
-			}
-			if kindDir == "" {
-				// Infer from shortname prefix
-				switch {
-				case strings.HasPrefix(shortName, "app-"):
-					kindDir = "apps"
-				case strings.HasPrefix(shortName, "theme-"):
-					kindDir = "themes"
-				default:
-					kindDir = "packages"
-				}
-			}
-
+			// Determine target directory
+			kindDir := kindDirForEntry(pkgName, shortName, catalogEntries)
 			targetDir := filepath.Join(workspaceRoot, kindDir, shortName)
 
 			// Skip if already cloned
 			if _, err := os.Stat(filepath.Join(targetDir, "package.json")); err == nil {
 				msgChan <- logLineMsg(fmt.Sprintf(">>> %s already cloned — skipping", shortName))
+				clonedDirs = append(clonedDirs, clonedInfo{shortName, targetDir})
 				continue
 			}
 
-			// Resolve git URL
-			owner := "owdproject"
-			if githubUser != "" {
-				owner = githubUser
-			} else {
-				for _, e := range catalogEntries {
-					if e.Name == pkgName && e.Org != "" {
-						owner = e.Org
-						break
-					}
-				}
-			}
-
+			// Resolve git URL (use githubUser if set, else owdproject/catalog org)
+			owner := resolveOwner(pkgName, githubUser, catalogEntries)
 			var gitURL string
 			if method == "git-ssh" {
 				gitURL = fmt.Sprintf("git@github.com:%s/%s.git", owner, shortName)
@@ -193,10 +162,100 @@ func (m *TuiModel) RunSetupTask(adds map[string]string) {
 				msgChan <- taskFinishedMsg{Success: false, Err: err}
 				return
 			}
-			msgChan <- logLineMsg(fmt.Sprintf(">>> ✓ %s cloned successfully", shortName))
+			msgChan <- logLineMsg(fmt.Sprintf(">>> ✓ %s cloned", shortName))
+			clonedDirs = append(clonedDirs, clonedInfo{shortName, targetDir})
 		}
 
-		// 2. Sync workspace with pnpm install
+		// ── Phase 1.5: Scan cloned packages for kit-* / module-* deps ────────
+		type depToClone struct {
+			shortName string
+			targetDir string
+			gitURL    string
+		}
+		var extraDeps []depToClone
+		seenDep := map[string]bool{}
+
+		// Mark packages already cloned or locally present as seen
+		for _, ci := range clonedDirs {
+			seenDep[ci.shortName] = true
+		}
+		for _, e := range catalogEntries {
+			if e.LocalSource {
+				seenDep[e.ShortName] = true
+			}
+		}
+
+		for _, ci := range clonedDirs {
+			data, err := os.ReadFile(filepath.Join(ci.targetDir, "package.json"))
+			if err != nil {
+				continue
+			}
+			var pkg struct {
+				Dependencies    map[string]string `json:"dependencies"`
+				DevDependencies map[string]string `json:"devDependencies"`
+			}
+			if json.Unmarshal(data, &pkg) != nil {
+				continue
+			}
+
+			allDeps := make(map[string]string)
+			for k, v := range pkg.Dependencies {
+				allDeps[k] = v
+			}
+			for k, v := range pkg.DevDependencies {
+				allDeps[k] = v
+			}
+
+			for depName := range allDeps {
+				if !strings.HasPrefix(depName, "@owdproject/") {
+					continue
+				}
+				depShort := depName[strings.LastIndex(depName, "/")+1:]
+				if !strings.HasPrefix(depShort, "module-") && !strings.HasPrefix(depShort, "kit-") {
+					continue
+				}
+				if seenDep[depShort] {
+					continue
+				}
+				depKindDir := kindDirForShortName(depShort)
+				depTarget := filepath.Join(workspaceRoot, depKindDir, depShort)
+				// Skip if already exists on disk
+				if _, err := os.Stat(filepath.Join(depTarget, "package.json")); err == nil {
+					seenDep[depShort] = true
+					continue
+				}
+				// Always clone deps from owdproject via HTTPS (no fork needed)
+				gitURL := fmt.Sprintf("https://github.com/owdproject/%s.git", depShort)
+				extraDeps = append(extraDeps, depToClone{depShort, depTarget, gitURL})
+				seenDep[depShort] = true
+				msgChan <- logLineMsg(fmt.Sprintf(">>> Detected required dep: %s", depShort))
+			}
+		}
+
+		// Extend progress bar if deps were found
+		if len(extraDeps) > 0 {
+			totalSteps += len(extraDeps)
+			msgChan <- setupProgressMsg{
+				Step:  step,
+				Total: totalSteps,
+				Label: fmt.Sprintf("Found %d additional dependenc%s…",
+					len(extraDeps), map[bool]string{true: "y", false: "ies"}[len(extraDeps) == 1]),
+			}
+
+			for _, dep := range extraDeps {
+				step++
+				msgChan <- setupProgressMsg{Step: step, Total: totalSteps, Label: fmt.Sprintf("Cloning %s…", dep.shortName)}
+				msgChan <- logLineMsg(fmt.Sprintf(">>> Cloning dep %s from %s", dep.shortName, dep.gitURL))
+				if err := runtime.runProcessAndStreamLogsSilent(workspaceRoot, "git", []string{"clone", dep.gitURL, dep.targetDir}); err != nil {
+					// Warn but don't abort — dep might be optional or already linked via npm
+					msgChan <- logLineMsg(fmt.Sprintf(">>> Warning: could not clone %s: %v", dep.shortName, err))
+				} else {
+					msgChan <- logLineMsg(fmt.Sprintf(">>> ✓ %s cloned", dep.shortName))
+				}
+			}
+		}
+
+		// ── Phase 2: pnpm install ─────────────────────────────────────────────
 		step++
 		msgChan <- setupProgressMsg{Step: step, Total: totalSteps, Label: "Installing dependencies (pnpm install)…"}
 		msgChan <- logLineMsg(">>> Running pnpm install (syncing workspace)…")
@@ -205,7 +264,7 @@ func (m *TuiModel) RunSetupTask(adds map[string]string) {
 			return
 		}
 
-		// 3. Rebuild stubs
+		// ── Phase 3: Rebuild stubs ────────────────────────────────────────────
 		step++
 		msgChan <- setupProgressMsg{Step: step, Total: totalSteps, Label: "Rebuilding stubs (prepare:modules)…"}
 		msgChan <- logLineMsg(">>> Rebuilding stubs…")
@@ -214,11 +273,55 @@ func (m *TuiModel) RunSetupTask(adds map[string]string) {
 			return
 		}
 
-		// Small pause so the user sees the progress bar reach 100% before it closes
 		time.Sleep(500 * time.Millisecond)
 		msgChan <- taskFinishedMsg{Success: true}
 	}()
 }
+
+// kindDirForEntry resolves the workspace subdirectory for a package.
+// Uses catalog entries first, falls back to shortname prefix.
+func kindDirForEntry(pkgName, shortName string, entries []bridge.CatalogEntry) string {
+	for _, e := range entries {
+		if e.Name == pkgName {
+			switch e.Kind {
+			case "app":
+				return "apps"
+			case "module":
+				return "packages"
+			case "theme":
+				return "themes"
+			}
+		}
+	}
+	return kindDirForShortName(shortName)
+}
+
+// kindDirForShortName infers the workspace subdirectory from the package short name.
+func kindDirForShortName(shortName string) string {
+	switch {
+	case strings.HasPrefix(shortName, "app-"):
+		return "apps"
+	case strings.HasPrefix(shortName, "theme-"):
+		return "themes"
+	default:
+		return "packages" // module-*, kit-*, and anything else
+	}
+}
+
+// resolveOwner returns the GitHub owner to use for cloning.
+// Priority: explicit githubUser setting > catalog org > "owdproject".
+func resolveOwner(pkgName, githubUser string, entries []bridge.CatalogEntry) string {
+	if githubUser != "" {
+		return githubUser
+	}
+	for _, e := range entries {
+		if e.Name == pkgName && e.Org != "" {
+			return e.Org
+		}
+	}
+	return "owdproject"
+}
+
 
 func (m *TuiModel) RunUpdatePackageTask(pkgName string, shortName string, kind string, isLocalSource bool) {
 	workspaceRoot := m.workspaceRoot
