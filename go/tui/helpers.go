@@ -809,6 +809,17 @@ func catalogSourceLabel(item bridge.CatalogEntry, localGitDirs map[string]bool) 
 	return "—"
 }
 
+// activeThemeName returns the currently selected theme (pending overrides saved config).
+func activeThemeName(ctx *bridge.WorkspaceContext, pendingTheme *string) string {
+	if pendingTheme != nil {
+		return *pendingTheme
+	}
+	if ctx != nil && ctx.Config.Theme != nil {
+		return *ctx.Config.Theme
+	}
+	return ""
+}
+
 func (m *TuiModel) getInstallMethods(pkg *bridge.CatalogEntry) []InstallMethod {
 	var methods []InstallMethod
 

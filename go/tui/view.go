@@ -358,14 +358,7 @@ func (m *TuiModel) renderCatalogRow(item bridge.CatalogEntry, selected bool, w, 
 	// ── Badge (checkbox / radiobox) ─────────────────────────────
 	var badge string
 	if item.Kind == "theme" {
-		active := false
-		if m.ctx != nil && m.ctx.Config.Theme != nil && *m.ctx.Config.Theme == item.Name {
-			active = true
-		}
-		if m.pendingTheme != nil && *m.pendingTheme == item.Name {
-			active = true
-		}
-		if active {
+		if activeThemeName(m.ctx, m.pendingTheme) == item.Name {
 			badge = accentStyle.Render("◉")
 		} else {
 			badge = subtleStyle.Render("○")

@@ -331,17 +331,13 @@ export async function executeInstallPlan(ctx) {
       ctx.setConfigRestartHintTimer(null)
     }
     if (ctx.isDevServerUp()) {
-      if (nextTheme !== config.theme) {
-        ctx.rebootDevServer()
-      } else {
-        ctx.setConfigRestartHintUntil(Date.now() + 5000)
-        ctx.setConfigRestartHintTimer(setTimeout(() => {
-          ctx.setConfigRestartHintUntil(0)
-          ctx.setConfigRestartHintTimer(null)
-          ctx.renderClient()
-          ctx.screen.render()
-        }, 5000))
-      }
+      ctx.setConfigRestartHintUntil(Date.now() + 5000)
+      ctx.setConfigRestartHintTimer(setTimeout(() => {
+        ctx.setConfigRestartHintUntil(0)
+        ctx.setConfigRestartHintTimer(null)
+        ctx.renderClient()
+        ctx.screen.render()
+      }, 5000))
     }
 
     ctx.renderAll()
@@ -689,17 +685,13 @@ export async function runStartupInstallFlow(ctx, { isStartup = false } = {}) {
       ctx.setConfigRestartHintTimer(null)
     }
     if (ctx.isDevServerUp()) {
-      if (nextTheme !== config.theme) {
-        ctx.rebootDevServer()
-      } else {
-        ctx.setConfigRestartHintUntil(Date.now() + 5000)
-        ctx.setConfigRestartHintTimer(setTimeout(() => {
-          ctx.setConfigRestartHintUntil(0)
-          ctx.setConfigRestartHintTimer(null)
-          ctx.renderClient()
-          ctx.screen.render()
-        }, 5000))
-      }
+      ctx.setConfigRestartHintUntil(Date.now() + 5000)
+      ctx.setConfigRestartHintTimer(setTimeout(() => {
+        ctx.setConfigRestartHintUntil(0)
+        ctx.setConfigRestartHintTimer(null)
+        ctx.renderClient()
+        ctx.screen.render()
+      }, 5000))
     }
 
     ctx.renderAll()

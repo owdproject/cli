@@ -99,20 +99,6 @@ func (m *TuiModel) loadCatalogCmd(force bool) tea.Cmd {
 	}
 }
 
-func (m *TuiModel) rebootServerCmd() tea.Cmd {
-	return func() tea.Msg {
-		m.runtime.msgChan <- logLineMsg("ℹ Theme change detected. Rebooting dev server…")
-		var metaDir string
-		if m.ctx != nil {
-			metaDir = m.ctx.Paths.MetaDir
-		}
-		stopServeTaskSync(m.workspaceRoot, metaDir, m.runtime)
-		time.Sleep(1500 * time.Millisecond)
-		m.RunServeTask()
-		return nil
-	}
-}
-
 func (m *TuiModel) checkServerStatusCmd() tea.Cmd {
 	return func() tea.Msg {
 		if m.ctx == nil {
@@ -317,13 +303,10 @@ func (m *TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if len(items) > 0 && m.selectedIndex < len(items) {
 				pkg := items[m.selectedIndex]
 				if m.activeTab == 3 { // Themes (radiobox)
-					active := false
-					if m.ctx != nil && m.ctx.Config.Theme != nil && *m.ctx.Config.Theme == pkg.Name {
-						active = true
-					}
-					if active {
+					current := activeThemeName(m.ctx, m.pendingTheme)
+					if current == pkg.Name && m.pendingTheme != nil {
 						m.pendingTheme = nil
-					} else {
+					} else if current != pkg.Name {
 						themeName := pkg.Name
 						m.pendingTheme = &themeName
 					}
@@ -395,15 +378,6 @@ func (m *TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.err = msg.Err
 			m.statusMsg = fmt.Sprintf("Error loading workspace: %v", msg.Err)
 		} else {
-			themeChanged := false
-			if m.ctx != nil && m.ctx.Config.Theme != nil && msg.Ctx.Config.Theme != nil {
-				if *m.ctx.Config.Theme != *msg.Ctx.Config.Theme {
-					themeChanged = true
-				}
-			} else if (m.ctx != nil && m.ctx.Config.Theme == nil && msg.Ctx.Config.Theme != nil) || (m.ctx != nil && m.ctx.Config.Theme != nil && msg.Ctx.Config.Theme == nil) {
-				themeChanged = true
-			}
-
 			m.ctx = msg.Ctx
 			m.statusMsg = "Workspace loaded."
 
@@ -411,12 +385,6 @@ func (m *TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.logTailerStarted = true
 				logPath := filepath.Join(m.ctx.Paths.MetaDir, "dev.log")
 				m.StartLogTailer(logPath)
-			}
-
-			if themeChanged && m.serverRunning {
-				m.statusMsg = "Rebooting server for theme change…"
-				m.activeTask = TaskServe
-				return m, m.rebootServerCmd()
 			}
 
 			return m, m.checkServerStatusCmd()
@@ -505,6 +473,9 @@ func (m *TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Success {
 			m.statusMsg = "Task completed."
 			m.addLog("✓ Wizard completed successfully")
+			if m.serverRunning {
+				m.addLog("ℹ desktop.config.ts updated — Nuxt restarts automatically (see dev server log)")
+			}
 
 			if m.startServerAfterSetup {
 				m.startServerAfterSetup = false

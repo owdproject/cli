@@ -71,3 +71,27 @@ func TestCatalogSourceLabel(t *testing.T) {
 		})
 	}
 }
+
+func TestActiveThemeName(t *testing.T) {
+	nova := "@owdproject/theme-nova"
+	gnome := "@owdproject/theme-gnome"
+	ctx := &bridge.WorkspaceContext{
+		Config: bridge.Config{Theme: &nova},
+	}
+
+	if got := activeThemeName(ctx, nil); got != nova {
+		t.Fatalf("expected saved theme %q, got %q", nova, got)
+	}
+
+	if got := activeThemeName(ctx, &gnome); got != gnome {
+		t.Fatalf("expected pending theme %q, got %q", gnome, got)
+	}
+
+	if got := activeThemeName(nil, &gnome); got != gnome {
+		t.Fatalf("expected pending theme without ctx %q, got %q", gnome, got)
+	}
+
+	if got := activeThemeName(nil, nil); got != "" {
+		t.Fatalf("expected empty theme, got %q", got)
+	}
+}
