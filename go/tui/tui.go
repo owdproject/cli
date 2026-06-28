@@ -3,6 +3,7 @@ package tui
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -46,6 +47,7 @@ func NewModel(root string) TuiModel {
 		activeTask:            TaskNone,
 		workspaceBranch:       "—",
 		workspaceChanges:      "clean",
+		clientStars:           -1,
 	}
 }
 
@@ -63,6 +65,7 @@ func (m *TuiModel) Init() tea.Cmd {
 		m.updateWorkspaceGitStatusCmd(),
 		m.listenToChannel(),
 		tickCmd(),
+		m.fetchClientStarsCmd(),
 	)
 }
 
@@ -96,6 +99,34 @@ func (m *TuiModel) loadCatalogCmd(force bool) tea.Cmd {
 	return func() tea.Msg {
 		cat, err := bridge.ReadCatalog(m.workspaceRoot, force)
 		return catalogLoadedMsg{Cat: cat, Err: err}
+	}
+}
+
+type clientStarsMsg int
+
+func (m *TuiModel) fetchClientStarsCmd() tea.Cmd {
+	return func() tea.Msg {
+		client := &http.Client{Timeout: 3 * time.Second}
+		req, err := http.NewRequest("GET", "https://api.github.com/repos/owdproject/client", nil)
+		if err != nil {
+			return clientStarsMsg(-1)
+		}
+		req.Header.Set("User-Agent", "owd-cli")
+		resp, err := client.Do(req)
+		if err != nil {
+			return clientStarsMsg(-1)
+		}
+		defer resp.Body.Close()
+
+		var res map[string]interface{}
+		if err := json.NewDecoder(resp.Body).Decode(&res); err == nil {
+			if starsVal, ok := res["stargazers_count"]; ok {
+				if starsFloat, ok := starsVal.(float64); ok {
+					return clientStarsMsg(int(starsFloat))
+				}
+			}
+		}
+		return clientStarsMsg(-1)
 	}
 }
 
@@ -182,6 +213,12 @@ func (m *TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.termWidth = msg.Width
 		m.termHeight = msg.Height
+		return m, nil
+
+	case clientStarsMsg:
+		if int(msg) >= 0 {
+			m.clientStars = int(msg)
+		}
 		return m, nil
 
 	case tickMsg:

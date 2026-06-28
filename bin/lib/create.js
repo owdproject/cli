@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, statSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, statSync, mkdtempSync, rmSync } from 'node:fs'
 import { join, dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import readline from 'node:readline/promises'
@@ -29,21 +29,20 @@ function camelCase(str) {
   return p.charAt(0).toLowerCase() + p.slice(1)
 }
 
-function getTemplateSrcDir(workspaceRoot, kind) {
-  if (kind === 'app') {
-    const monorepoPath = join(workspaceRoot, 'apps/app-template')
-    if (existsSync(join(monorepoPath, 'package.json'))) {
-      return monorepoPath
-    }
-  } else if (kind === 'module') {
-    const monorepoPath = join(workspaceRoot, 'packages/module-template')
-    if (existsSync(join(monorepoPath, 'package.json'))) {
-      return monorepoPath
+async function cloneTemplate(gitUrl, destDir) {
+  try {
+    await spawnAsync('git', ['clone', '--depth', '1', gitUrl, destDir])
+  } catch (err) {
+    if (gitUrl.startsWith('git@')) {
+      const httpsUrl = gitUrl
+        .replace('git@github.com:', 'https://github.com/')
+        .replace(/\.git$/, '') + '.git'
+      console.log(`SSH clone failed, trying HTTPS fallback: ${httpsUrl}`)
+      await spawnAsync('git', ['clone', '--depth', '1', httpsUrl, destDir])
+    } else {
+      throw err
     }
   }
-
-  // Fallback to packed templates inside CLI package
-  return join(CLI_ROOT, 'templates', kind)
 }
 
 function copyAndScaffold(srcDir, destDir, replacements) {
@@ -143,9 +142,40 @@ export async function runCreateCli(options = {}) {
 
   console.log(`\nCreating new ${kind} in ${targetDir}...\n`)
 
-  const templateSrc = getTemplateSrcDir(workspaceRoot, kind)
-  if (!existsSync(templateSrc)) {
-    throw new Error(`Template source directory not found: ${templateSrc}`)
+  let templateSrc = null
+  let tempCloneDir = null
+
+  if (kind === 'app') {
+    const monorepoPath = join(workspaceRoot, 'apps/app-template')
+    if (existsSync(join(monorepoPath, 'package.json'))) {
+      templateSrc = monorepoPath
+    }
+  } else if (kind === 'module') {
+    const monorepoPath = join(workspaceRoot, 'packages/module-template')
+    if (existsSync(join(monorepoPath, 'package.json'))) {
+      templateSrc = monorepoPath
+    }
+  }
+
+  if (!templateSrc) {
+    const gitUrl = kind === 'app'
+      ? 'git@github.com:owdproject/app-template.git'
+      : 'git@github.com:owdproject/module-template.git'
+
+    console.log(`Cloning template from ${gitUrl}...`)
+    try {
+      const tmpPrefix = join(workspaceRoot, '.owd-template-')
+      tempCloneDir = mkdtempSync(tmpPrefix)
+      await cloneTemplate(gitUrl, tempCloneDir)
+      templateSrc = tempCloneDir
+    } catch (err) {
+      if (tempCloneDir && existsSync(tempCloneDir)) {
+        try {
+          rmSync(tempCloneDir, { recursive: true, force: true })
+        } catch {}
+      }
+      throw new Error(`Failed to clone template from GitHub: ${err.message}`)
+    }
   }
 
   // Prepare replacements
@@ -176,8 +206,16 @@ export async function runCreateCli(options = {}) {
   }
 
   // Copy and replace placeholders
-  copyAndScaffold(templateSrc, targetDir, replacements)
-  console.log(`✓ Files scaffolded from template.`)
+  try {
+    copyAndScaffold(templateSrc, targetDir, replacements)
+    console.log(`✓ Files scaffolded from template.`)
+  } finally {
+    if (tempCloneDir && existsSync(tempCloneDir)) {
+      try {
+        rmSync(tempCloneDir, { recursive: true, force: true })
+      } catch {}
+    }
+  }
 
   // Run pnpm install in root
   console.log('Running pnpm install in workspace root...')

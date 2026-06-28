@@ -253,6 +253,38 @@ func (m *TuiModel) renderMetricsPanel(w, h int) string {
 	vers := getVersions(nuxtRoot, m.workspaceRoot)
 	lines = append(lines, kv("Nuxt", vers.Nuxt)+mutedStyle.Render(" · ")+kv("Core", vers.Owd))
 
+	// Tips rotating every 5 seconds (approx. 33 ticks of 150ms)
+	var tips []string
+	if m.clientStars >= 0 {
+		tips = []string{
+			fmt.Sprintf("★ owdproject/client: %d stars", m.clientStars),
+			"Tip: Use arrow keys to navigate",
+			"Tip: Space to toggle a package",
+			"Tip: 'r' to refresh the catalog",
+			"Tip: 's' to start/stop server",
+			"Tip: 'c' to manage a package",
+			"Tip: 'n' to scaffold new package",
+		}
+	} else {
+		tips = []string{
+			"Tip: Use arrow keys to navigate",
+			"Tip: Space to toggle a package",
+			"Tip: 'r' to refresh the catalog",
+			"Tip: 's' to start/stop server",
+			"Tip: 'c' to manage a package",
+			"Tip: 'n' to scaffold new package",
+		}
+	}
+	tipIdx := (m.tickCount / 33) % len(tips)
+	tipText := tips[tipIdx]
+
+	lines = append(lines, "")
+	lines = append(lines, dimStyle.Render(truncate(tipText, w-2)))
+
+	for i, line := range lines {
+		lines[i] = "  " + line
+	}
+
 	return strings.Join(lines, "\n")
 }
 

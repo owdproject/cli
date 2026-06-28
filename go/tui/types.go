@@ -226,4 +226,5 @@ type TuiModel struct {
 	setupLabel            string
 	workspaceBranch       string
 	workspaceChanges      string
+	clientStars           int
 }
