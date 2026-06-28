@@ -158,6 +158,24 @@ func (m *TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.statusMsg = "Logs cleared."
 				return m, nil
 			}
+			if msg.Y == 10 {
+				if msg.X <= 13 {
+					m.activeTab, m.selectedIndex, m.scrollOffset = 0, 0, 0
+					return m, nil
+				}
+				if msg.X >= 14 && msg.X <= 22 {
+					m.activeTab, m.selectedIndex, m.scrollOffset = 1, 0, 0
+					return m, nil
+				}
+				if msg.X >= 23 && msg.X <= 34 {
+					m.activeTab, m.selectedIndex, m.scrollOffset = 2, 0, 0
+					return m, nil
+				}
+				if msg.X >= 35 {
+					m.activeTab, m.selectedIndex, m.scrollOffset = 3, 0, 0
+					return m, nil
+				}
+			}
 		}
 		return m, nil
 

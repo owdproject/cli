@@ -22,13 +22,13 @@ func (m *TuiModel) View() string {
 	if h < 11 {
 		h = 11
 	}
-	h = h - 1 // Safety margin of 1 line at the bottom to prevent scrolling
+	// h = h - 1 // Safety margin of 1 line at the bottom to prevent scrolling
 
 	showRightPanel := w >= 120
 
 	// Heights
 	topH := 9    // top panels row (with borders = 9 rows)
-	barH := 5    // status bar: 3 blank lines + line1 + line2 = 5 rows
+	barH := 4    // status bar: 1 blank line + line1 + line2 = 4 rows
 	// catalog gets the remaining height
 	catalogH := h - topH - barH
 	if catalogH < 4 {
@@ -69,7 +69,7 @@ func (m *TuiModel) View() string {
 		}
 		baseStyle := lipgloss.NewStyle().Foreground(colorWhite).Bold(true)
 		styledBase := baseStyle.Render(baseTitle)
-		clearBtn := lipgloss.NewStyle().Foreground(colorAccent).Bold(true).Render("[Clear]")
+		clearBtn := lipgloss.NewStyle().Foreground(colorAccent).Bold(true).Render("[clear]")
 		rightPanelTitle := styledBase + "  " + clearBtn
 
 		rightPanel = drawPanel(rightW, h-barH, rightPanelTitle, logContent, false)
@@ -470,10 +470,6 @@ func (m *TuiModel) renderDetailRow(items []bridge.CatalogEntry) string {
 	if item.Stars > 0 {
 		stars = fmt.Sprintf("★ %d", item.Stars)
 	}
-	desc := "No description provided."
-	if item.Description != "" {
-		desc = item.Description
-	}
 
 	var status string
 	if item.Installed {
@@ -495,7 +491,6 @@ func (m *TuiModel) renderDetailRow(items []bridge.CatalogEntry) string {
 		"  " + mutedStyle.Render("Stars:") + " " + boldStyle.Render(stars),
 		"  " + mutedStyle.Render("Status:") + " " + status,
 		"  " + mutedStyle.Render("Type:") + " " + boldStyle.Render(kind),
-		"  " + mutedStyle.Render("—") + " " + mutedStyle.Render(desc),
 	}
 
 	return "  " + strings.Join(parts, " ")
@@ -752,8 +747,8 @@ func (m *TuiModel) renderStatusBar(w int) string {
 		line2Raw = truncate(line2Raw, w)
 	}
 
-	// Always return exactly 5 lines: 3 blank + line1 + line2
-	return "\n\n\n" + line1Raw + "\n" + line2Raw
+	// Always return exactly 4 lines: 1 blank + line1 + line2
+	return "\n\n" + line1Raw + "\n" + line2Raw
 }
 
 func (m *TuiModel) getActiveItems() []bridge.CatalogEntry {
