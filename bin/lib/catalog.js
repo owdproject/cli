@@ -337,6 +337,8 @@ export async function loadCatalog(workspaceRoot, settings, options = {}) {
     trusted: isTrustedPublisher(entry, settings),
   }))
 
+  entries = entries.filter((e) => !e.name.includes('-template') && !e.shortName.includes('-template'))
+
   entries = await enrichCatalogEntries(entries, workspaceRoot, settings)
 
   return {
