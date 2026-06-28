@@ -147,6 +147,31 @@ func BuildQueueFromConfig(
 		seen[pkg.Name] = true
 		addPackageToQueue(q, workspaceRoot, pkg.Name, pkg.Kind, deps, catalog, false, logFn)
 	}
+
+	// Recursively scan dependencies of all local packages in the queue
+	scanned := map[string]bool{}
+	for {
+		hasNewScan := false
+		var names []string
+		for _, item := range q.Items {
+			if !scanned[item.Name] {
+				names = append(names, item.Name)
+			}
+		}
+
+		for _, name := range names {
+			scanned[name] = true
+			item := q.FindByName(name)
+			if item != nil && isLocallyAvailable(workspaceRoot, item.ShortName) {
+				DiscoverNestedDeps(workspaceRoot, *item, catalog, q, logFn)
+				hasNewScan = true
+			}
+		}
+		if !hasNewScan {
+			break
+		}
+	}
+
 	return q
 }
 
@@ -200,6 +225,30 @@ func BuildStartupCheckQueue(
 		}
 	}
 
+	// Recursively scan dependencies of all local packages in the queue
+	scanned := map[string]bool{}
+	for {
+		hasNewScan := false
+		var names []string
+		for _, item := range q.Items {
+			if !scanned[item.Name] {
+				names = append(names, item.Name)
+			}
+		}
+
+		for _, name := range names {
+			scanned[name] = true
+			item := q.FindByName(name)
+			if item != nil && isLocallyAvailable(workspaceRoot, item.ShortName) {
+				DiscoverNestedDeps(workspaceRoot, *item, catalog, q, logFn)
+				hasNewScan = true
+			}
+		}
+		if !hasNewScan {
+			break
+		}
+	}
+
 	return q
 }
 
@@ -220,8 +269,10 @@ func addPackageToQueue(
 		short = shortNameFromPkg(name)
 	}
 
-	if entry.LocalSource || isLocallyAvailable(workspaceRoot, short) {
-		logFn("ℹ " + short + " already available")
+	version, inPkg := deps[name]
+
+	if (entry.LocalSource || isLocallyAvailable(workspaceRoot, short)) && inPkg {
+		logFn("ℹ " + short + " already available and configured in package.json")
 		q.AppendUnique(WorkItem{
 			Name:       name,
 			ShortName:  short,
@@ -236,7 +287,6 @@ func addPackageToQueue(
 		return
 	}
 
-	version, inPkg := deps[name]
 	if !inPkg {
 		logFn("⚠ " + short + " missing from package.json")
 		q.AppendUnique(WorkItem{
@@ -296,7 +346,7 @@ func addPackageToQueue(
 	})
 }
 
-// DiscoverNestedDeps scans a cloned package for kit-*/module-* deps.
+// DiscoverNestedDeps scans a cloned/local package for deps.
 func DiscoverNestedDeps(
 	workspaceRoot string,
 	item WorkItem,
@@ -313,13 +363,15 @@ func DiscoverNestedDeps(
 		if existing.FindByName(dep) != nil {
 			continue
 		}
-		short := shortNameFromPkg(dep)
-		if isLocallyAvailable(workspaceRoot, short) {
-			logFn("ℹ " + short + " already available")
-			continue
+		depShort := shortNameFromPkg(dep)
+		depKind := "module"
+		if strings.HasPrefix(depShort, "app-") {
+			depKind = "app"
+		} else if strings.HasPrefix(depShort, "theme-") {
+			depKind = "theme"
 		}
-		logFn("⚠ Missing dependency discovered: " + short)
+		logFn("⚠ Dependency discovered: " + depShort)
 		pkgDeps, _ := readDesktopPackageDeps(filepath.Join(workspaceRoot, "desktop", "package.json"))
-		addPackageToQueue(existing, workspaceRoot, dep, "module", pkgDeps, catalog, true, logFn)
+		addPackageToQueue(existing, workspaceRoot, dep, depKind, pkgDeps, catalog, true, logFn)
 	}
 }

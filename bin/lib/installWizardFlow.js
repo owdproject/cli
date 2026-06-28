@@ -4,7 +4,8 @@ import {
   isInstallableDesktopModule,
   isDesktopKitPackage,
   shortName,
-  getPackagesRequiredByTheme
+  getPackagesRequiredByTheme,
+  findMissingWorkspaceDependencies,
 } from './workspace.js'
 import {
   readDesktopConfig,
@@ -272,6 +273,42 @@ export async function executeInstallPlan(ctx) {
         failures.push({ pkg, error: msg })
         ctx.setStatus(`${shortName(pkg)}: ${msg}`, 'error')
         ctx.screen.render()
+      }
+    }
+
+    // Detect and clone any missing workspace:* dependencies recursively
+    let missingWorkspaceDeps = findMissingWorkspaceDependencies(workspaceRoot)
+    const autoClonedDeps = new Set()
+
+    while (missingWorkspaceDeps.length > 0) {
+      const dep = missingWorkspaceDeps.shift()
+      if (autoClonedDeps.has(dep)) continue
+      autoClonedDeps.add(dep)
+
+      bump(`Cloning dependency ${shortName(dep)}…`)
+      ctx.clearLogs()
+
+      try {
+        const plan = await resolveInstallPlan(dep, settings, workspaceRoot)
+        if (plan.error) {
+          throw new Error(plan.error)
+        }
+        if (plan.targetDir && plan.source?.gitUrl) {
+          await cloneRepo(plan.targetDir, plan.source.gitUrl, undefined, workspaceRoot, { quiet: true })
+          didClone = true
+          clonedPackages.push(dep)
+          const newMissing = findMissingWorkspaceDependencies(workspaceRoot)
+          for (const m of newMissing) {
+            if (!autoClonedDeps.has(m) && !missingWorkspaceDeps.includes(m)) {
+              missingWorkspaceDeps.push(m)
+            }
+          }
+        } else {
+          throw new Error('Unknown git clone URL')
+        }
+      } catch (err) {
+        const msg = err.message?.split('\n').find(l => l.trim()) ?? String(err)
+        failures.push({ pkg: dep, error: `Failed to resolve workspace dependency ${shortName(dep)}: ${msg}` })
       }
     }
 
@@ -594,6 +631,43 @@ export async function runStartupInstallFlow(ctx, { isStartup = false } = {}) {
             await cloneOrInstallPkg(kit)
           }
         }
+      }
+    }
+
+    // Detect and clone any missing workspace:* dependencies recursively
+    let missingWorkspaceDeps = findMissingWorkspaceDependencies(workspaceRoot)
+    const autoClonedDeps = new Set()
+
+    while (missingWorkspaceDeps.length > 0) {
+      const dep = missingWorkspaceDeps.shift()
+      if (autoClonedDeps.has(dep)) continue
+      autoClonedDeps.add(dep)
+
+      bump(`Cloning dependency ${shortName(dep)}…`)
+      ctx.clearLogs()
+
+      try {
+        const plan = await resolveInstallPlan(dep, settings, workspaceRoot)
+        if (plan.error) {
+          throw new Error(plan.error)
+        }
+        if (plan.targetDir && plan.source?.gitUrl) {
+          await cloneRepo(plan.targetDir, plan.source.gitUrl, undefined, workspaceRoot, { quiet: true })
+          didClone = true
+          allCloned.push(dep)
+          const newMissing = findMissingWorkspaceDependencies(workspaceRoot)
+          for (const m of newMissing) {
+            if (!autoClonedDeps.has(m) && !missingWorkspaceDeps.includes(m)) {
+              missingWorkspaceDeps.push(m)
+            }
+          }
+        } else {
+          throw new Error('Unknown git clone URL')
+        }
+      } catch (err) {
+        const msg = err.message?.split('\n').find(l => l.trim()) ?? String(err)
+        ctx.setStatus(`Failed to resolve workspace dependency ${shortName(dep)}: ${msg}`, 'error')
+        ctx.screen.render()
       }
     }
 

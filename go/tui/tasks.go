@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"owd-cli/bridge"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 // ─────────────────────────────────────────────
@@ -162,72 +164,13 @@ func (m *TuiModel) RunSetupTask(adds map[string]string) {
 			clonedDirs = append(clonedDirs, clonedInfo{shortName, targetDir, pkgName})
 		}
 
+		// ── Phase 1.5: Recursively scan and clone missing workspace dependencies ──
 		msgChan <- setupProgressMsg{Step: step, Total: totalSteps, Label: "Scanning package dependencies…"}
 
-		// ── Phase 1.5: Scan cloned packages for kit-* / module-* deps ────────
-		var newlyDiscovered []string
-		seenDep := map[string]bool{}
-		for k := range currentBatch {
-			short := k
-			if idx := strings.LastIndex(k, "/"); idx >= 0 {
-				short = k[idx+1:]
-			}
-			seenDep[short] = true
-		}
-		for _, e := range catalogEntries {
-			if e.LocalSource {
-				seenDep[e.ShortName] = true
-			}
-		}
-
-		for _, ci := range clonedDirs {
-			data, err := os.ReadFile(filepath.Join(ci.targetDir, "package.json"))
-			if err != nil {
-				continue
-			}
-			var pkg struct {
-				Dependencies    map[string]string `json:"dependencies"`
-				DevDependencies map[string]string `json:"devDependencies"`
-			}
-			if json.Unmarshal(data, &pkg) != nil {
-				continue
-			}
-
-			allDeps := make(map[string]string)
-			for k, v := range pkg.Dependencies {
-				allDeps[k] = v
-			}
-			for k, v := range pkg.DevDependencies {
-				allDeps[k] = v
-			}
-
-			for depName := range allDeps {
-				if !strings.HasPrefix(depName, "@owdproject/") {
-					continue
-				}
-				depShort := depName[strings.LastIndex(depName, "/")+1:]
-				if !strings.HasPrefix(depShort, "module-") && !strings.HasPrefix(depShort, "kit-") {
-					continue
-				}
-				if seenDep[depShort] {
-					continue
-				}
-				depKindDir := kindDirForShortName(depShort)
-				depTarget := filepath.Join(workspaceRoot, depKindDir, depShort)
-				// Skip if already exists on disk
-				if _, err := os.Stat(filepath.Join(depTarget, "package.json")); err == nil {
-					seenDep[depShort] = true
-					continue
-				}
-
-				newlyDiscovered = append(newlyDiscovered, depName)
-				seenDep[depShort] = true
-				msgChan <- logLineMsg(fmt.Sprintf("ℹ Detected required dep: %s", depShort))
-			}
-		}
-
-		if len(newlyDiscovered) > 0 {
-			msgChan <- logLineMsg(fmt.Sprintf("⚠ Missing dependencies discovered (use Save wizard): %v", newlyDiscovered))
+		logFunc := func(line string) { msgChan <- logLineMsg(line) }
+		if err := ResolveAndCloneMissingDependencies(workspaceRoot, catalogEntries, runtime, logFunc, msgChan, &step, &totalSteps); err != nil {
+			msgChan <- taskFinishedMsg{Success: false, Err: err}
+			return
 		}
 
 		// ── Phase 2: pnpm install ─────────────────────────────────────────────
@@ -780,3 +723,128 @@ func killWorkspaceProcesses(workspaceRoot string) {
 		}
 	}
 }
+
+// ResolveAndCloneMissingDependencies recursively scans the workspace for any missing workspace:* dependencies and clones them.
+func ResolveAndCloneMissingDependencies(
+	workspaceRoot string,
+	catalogEntries []bridge.CatalogEntry,
+	runtime *RuntimeState,
+	log func(string),
+	msgChan chan<- tea.Msg,
+	step *int,
+	totalSteps *int,
+) error {
+	inWorkspace := map[string]bool{}
+
+	scanWorkspace := func() ([]string, error) {
+		localFolders := []string{filepath.Join(workspaceRoot, "desktop")}
+		dirs := []string{"apps", "packages", "themes"}
+		for _, d := range dirs {
+			p := filepath.Join(workspaceRoot, d)
+			entries, err := os.ReadDir(p)
+			if err != nil {
+				continue
+			}
+			for _, entry := range entries {
+				if entry.IsDir() {
+					localFolders = append(localFolders, filepath.Join(p, entry.Name()))
+				}
+			}
+		}
+
+		// Clean/reset inWorkspace map
+		for k := range inWorkspace {
+			delete(inWorkspace, k)
+		}
+
+		for _, folder := range localFolders {
+			data, err := os.ReadFile(filepath.Join(folder, "package.json"))
+			if err != nil {
+				continue
+			}
+			var pkg struct {
+				Name string `json:"name"`
+			}
+			if json.Unmarshal(data, &pkg) == nil && pkg.Name != "" {
+				inWorkspace[pkg.Name] = true
+			}
+		}
+
+		var missing []string
+		for _, folder := range localFolders {
+			data, err := os.ReadFile(filepath.Join(folder, "package.json"))
+			if err != nil {
+				continue
+			}
+			var pkg struct {
+				Dependencies    map[string]string `json:"dependencies"`
+				DevDependencies map[string]string `json:"devDependencies"`
+			}
+			if json.Unmarshal(data, &pkg) != nil {
+				continue
+			}
+
+			allDeps := make(map[string]string)
+			for k, v := range pkg.Dependencies {
+				allDeps[k] = v
+			}
+			for k, v := range pkg.DevDependencies {
+				allDeps[k] = v
+			}
+
+			for depName, depVer := range allDeps {
+				if !strings.HasPrefix(depName, "@owdproject/") {
+					continue
+				}
+				if !strings.HasPrefix(depVer, "workspace:") {
+					continue
+				}
+				if !inWorkspace[depName] {
+					alreadyAdded := false
+					for _, m := range missing {
+						if m == depName {
+							alreadyAdded = true
+							break
+						}
+					}
+					if !alreadyAdded {
+						missing = append(missing, depName)
+					}
+				}
+			}
+		}
+		return missing, nil
+	}
+
+	for {
+		missing, err := scanWorkspace()
+		if err != nil || len(missing) == 0 {
+			break
+		}
+
+		depName := missing[0]
+		depShort := depName[strings.LastIndex(depName, "/")+1:]
+		depKindDir := kindDirForShortName(depShort)
+		depTarget := filepath.Join(workspaceRoot, depKindDir, depShort)
+
+		owner := resolveOwner(depName, catalogEntries)
+		gitURL := fmt.Sprintf("https://github.com/%s/%s.git", owner, depShort)
+
+		if step != nil && totalSteps != nil && msgChan != nil {
+			*totalSteps++
+			*step++
+			msgChan <- setupProgressMsg{Step: *step, Total: *totalSteps, Label: fmt.Sprintf("Cloning dep %s…", depShort)}
+		}
+		log(fmt.Sprintf("ℹ Auto-cloning missing workspace dependency %s from %s", depShort, gitURL))
+
+		if err := runtime.runProcessAndStreamLogsSilent(workspaceRoot, "git", []string{"clone", gitURL, depTarget}); err != nil {
+			log(fmt.Sprintf("✗ Auto-clone failed for %s: %v", depShort, err))
+			return err
+		}
+		log(fmt.Sprintf("✓ %s auto-cloned", depShort))
+		inWorkspace[depName] = true
+	}
+
+	return nil
+}
+

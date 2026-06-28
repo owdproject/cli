@@ -136,14 +136,18 @@ func (m *TuiModel) renderResolveDependencyModal() string {
 	}
 	content.WriteString("How do you want to resolve it?\n\n")
 
-	options := []struct {
+	var options []struct {
 		Name  string
 		Label string
-	}{
-		{"git-ssh", "Git SSH"},
-		{"git-https", "Git HTTPS"},
-		{"npm", "NPM Package"},
 	}
+	if isLocallyAvailable(m.workspaceRoot, shortName) {
+		options = append(options, struct{ Name, Label string }{"local", "Use Existing Local Folder"})
+	}
+	options = append(options,
+		struct{ Name, Label string }{"git-ssh", "Git SSH"},
+		struct{ Name, Label string }{"git-https", "Git HTTPS"},
+		struct{ Name, Label string }{"npm", "NPM Package"},
+	)
 	for i, opt := range options {
 		if i == m.promptSel {
 			content.WriteString("  " + modalOptionActive.Render(opt.Label) + "\n")

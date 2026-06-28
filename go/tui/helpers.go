@@ -177,7 +177,7 @@ func getOwdDepsLocal(workspaceRoot, shortName, kind string) ([]string, bool) {
 				continue
 			}
 			short := name[strings.LastIndex(name, "/")+1:]
-			if strings.HasPrefix(short, "module-") || strings.HasPrefix(short, "kit-") {
+			if strings.HasPrefix(short, "module-") || strings.HasPrefix(short, "kit-") || strings.HasPrefix(short, "app-") || strings.HasPrefix(short, "theme-") {
 				deps = append(deps, name)
 				seen[name] = true
 			}
@@ -220,7 +220,7 @@ func getOwdDepsFromNpm(pkgName string) ([]string, error) {
 			continue
 		}
 		short := name[strings.LastIndex(name, "/")+1:]
-		if strings.HasPrefix(short, "module-") || strings.HasPrefix(short, "kit-") {
+		if strings.HasPrefix(short, "module-") || strings.HasPrefix(short, "kit-") || strings.HasPrefix(short, "app-") || strings.HasPrefix(short, "theme-") {
 			deps = append(deps, name)
 			seen[name] = true
 		}
@@ -823,8 +823,12 @@ func activeThemeName(ctx *bridge.WorkspaceContext, pendingTheme *string) string 
 func (m *TuiModel) getInstallMethods(pkg *bridge.CatalogEntry) []InstallMethod {
 	var methods []InstallMethod
 
-	// 0. Local folder option if already present in workspace (pkg.LocalSource is true)
-	if pkg.LocalSource {
+	// 0. Local folder option if already present in workspace
+	short := pkg.ShortName
+	if short == "" {
+		short = shortNameFromPkg(pkg.Name)
+	}
+	if pkg.LocalSource || isLocallyAvailable(m.workspaceRoot, short) {
 		methods = append(methods, InstallMethod{
 			Name:  "local",
 			Label: "Use Existing Local Folder",

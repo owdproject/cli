@@ -271,6 +271,15 @@ func (m *TuiModel) RunWizardEngine(
 				emitQueue(q)
 			}
 		}
+		var catalogEntries []bridge.CatalogEntry
+		if catalog != nil {
+			catalogEntries = catalog.Entries
+		}
+		if err := ResolveAndCloneMissingDependencies(workspaceRoot, catalogEntries, runtime, log, nil, nil, nil); err != nil {
+			emitPhase(PhaseFailed)
+			msgChan <- taskFinishedMsg{Success: false, Err: err}
+			return
+		}
 
 		emitPhase(PhaseInstall)
 		log("ℹ Running pnpm install")
@@ -330,6 +339,16 @@ func applyResolution(
 	short := item.ShortName
 
 	switch method {
+	case "local":
+		if err := bridge.WritePackageJsonDeps(workspaceRoot, map[string]string{name: "workspace:*"}, nil); err != nil {
+			log("✖ Failed to link local package " + short)
+			return err
+		}
+		q.SetSource(name, "local", KindLocal)
+		q.MarkSkipped(name)
+		log("✔ " + short + " linked as local package")
+		return nil
+
 	case "git-ssh", "git-https":
 		owner := resolveOwner(name, catalogEntriesSlice(catalog))
 		var gitURL string

@@ -258,14 +258,26 @@ func (m *TuiModel) handleUninstallConfirmKeys(msg tea.KeyMsg) (tea.Model, tea.Cm
 }
 
 func (m *TuiModel) handleResolveDependencyKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	methods := []struct {
+	shortName := "package"
+	if m.promptItem != nil {
+		shortName = m.promptItem.ShortName
+	}
+	if shortName == "" && m.promptPkg != nil {
+		shortName = m.promptPkg.ShortName
+	}
+
+	var methods []struct {
 		Name  string
 		Label string
-	}{
-		{"git-ssh", "Git SSH"},
-		{"git-https", "Git HTTPS"},
-		{"npm", "NPM Package"},
 	}
+	if isLocallyAvailable(m.workspaceRoot, shortName) {
+		methods = append(methods, struct{ Name, Label string }{"local", "Use Existing Local Folder"})
+	}
+	methods = append(methods,
+		struct{ Name, Label string }{"git-ssh", "Git SSH"},
+		struct{ Name, Label string }{"git-https", "Git HTTPS"},
+		struct{ Name, Label string }{"npm", "NPM Package"},
+	)
 
 	switch msg.String() {
 	case "esc", "q":

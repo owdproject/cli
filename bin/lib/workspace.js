@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, mkdirSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, mkdirSync, writeFileSync, readdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { execSync } from 'node:child_process'
 import {
@@ -219,4 +219,71 @@ export function getPackagesRequiredByTheme(workspaceRoot, themeName) {
     return []
   }
 }
+
+/**
+ * Scans all package.json files in the workspace (including desktop/)
+ * and returns any @owdproject/ dependencies that use the 'workspace:' protocol
+ * but are not present locally on disk.
+ * @param {string} workspaceRoot
+ * @returns {string[]}
+ */
+export function findMissingWorkspaceDependencies(workspaceRoot) {
+  const missing = new Set()
+  const localPackages = new Set()
+  const pkgPaths = []
+
+  // 1. Scan KINDS subdirectories for local packages
+  for (const kind of Object.values(KINDS)) {
+    const dir = join(workspaceRoot, kind.workspaceDir)
+    if (!existsSync(dir)) continue
+    try {
+      const entries = readdirSync(dir, { withFileTypes: true })
+      for (const entry of entries) {
+        if (entry.isDirectory()) {
+          const pkgJsonPath = join(dir, entry.name, 'package.json')
+          if (existsSync(pkgJsonPath)) {
+            const pkgPath = join(dir, entry.name)
+            pkgPaths.push(pkgPath)
+            try {
+              const pkgJson = JSON.parse(readFileSync(pkgJsonPath, 'utf8'))
+              if (pkgJson.name) {
+                localPackages.add(pkgJson.name)
+              }
+            } catch {}
+          }
+        }
+      }
+    } catch {}
+  }
+
+  // 2. Include the desktop app itself
+  const desktopDir = join(workspaceRoot, 'desktop')
+  if (existsSync(join(desktopDir, 'package.json'))) {
+    pkgPaths.push(desktopDir)
+    try {
+      const pkgJson = JSON.parse(readFileSync(join(desktopDir, 'package.json'), 'utf8'))
+      if (pkgJson.name) {
+        localPackages.add(pkgJson.name)
+      }
+    } catch {}
+  }
+
+  // 3. Find missing workspace:* dependencies
+  for (const pkgPath of pkgPaths) {
+    try {
+      const pkgJson = JSON.parse(readFileSync(join(pkgPath, 'package.json'), 'utf8'))
+      const deps = { ...pkgJson.dependencies, ...pkgJson.devDependencies }
+      for (const [depName, version] of Object.entries(deps)) {
+        if (depName.startsWith(SCOPE) && typeof version === 'string' && version.startsWith('workspace:')) {
+          if (!localPackages.has(depName)) {
+            missing.add(depName)
+          }
+        }
+      }
+    } catch {}
+  }
+
+  return Array.from(missing)
+}
+
 
