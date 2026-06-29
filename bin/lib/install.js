@@ -17,6 +17,7 @@ import {
   resolveDesktopConfigPath,
   desktopConfigWritePath,
 } from './desktopConfig.js'
+import { addToDesktopConfig } from './config.js'
 
 const require = createRequire(import.meta.url)
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -340,16 +341,7 @@ export async function runPrepareModules(workspaceRoot, _stdio = 'inherit') {
   }
 }
 
-function loadConfigUtil(workspaceRoot) {
-  const utilPath = join(
-    workspaceRoot,
-    'node_modules/@owdproject/nx/dist/utils/utilConfig.js',
-  )
-  if (!existsSync(utilPath)) {
-    throw new Error('Workspace install needs @owdproject/nx. Run `pnpm install` at the repo root.')
-  }
-  return require(utilPath)
-}
+
 
 export function printPlan({ pkgName, kind, targetDir, source, branch, dryRun }) {
   const kindMeta = KINDS[kind]
@@ -453,8 +445,7 @@ export async function runWorkspaceInstall({
   await cloneRepo(targetDir, source.gitUrl, branch, workspaceRoot)
   await linkWorkspacePackage(desktopPath, pkgName)
 
-  const { addToDesktopConfig } = loadConfigUtil(workspaceRoot)
-  addToDesktopConfig(configPath, KINDS[kind].configKey, pkgName)
+  addToDesktopConfig(configPath, workspaceRoot, KINDS[kind].configKey, pkgName)
 
   await runDevPrepare(workspaceRoot, pkgName)
 
@@ -464,8 +455,7 @@ export async function runWorkspaceInstall({
 
 export function runNpmInstall(kind, pkgName, workspaceRoot, stdio = 'inherit') {
   return new Promise((resolve, reject) => {
-    const nxTarget = KINDS[kind].nx
-    const child = spawn('pnpm', ['nx', 'run', nxTarget, `--name=${pkgName}`], {
+    const child = spawn('node', ['scripts/install-app.mjs', pkgName, `--kind=${kind}`], {
       stdio,
       shell: true,
       cwd: workspaceRoot,

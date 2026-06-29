@@ -8,6 +8,7 @@ import {
   resolveDesktopConfigPath,
   desktopConfigWritePath,
 } from './desktopConfig.js'
+import { addToDesktopConfig } from './config.js'
 import {
   linkWorkspacePackage,
   spawnAsync,
@@ -231,15 +232,7 @@ export async function runCreateCli(options = {}) {
   const resolved = resolveDesktopConfigPath(desktopPath)
   const configPath = resolved?.path ?? desktopConfigWritePath(desktopPath)
 
-  const utilPath = join(
-    workspaceRoot,
-    'node_modules/@owdproject/nx/dist/utils/utilConfig.js',
-  )
-  if (!existsSync(utilPath)) {
-    throw new Error('Workspace install needs @owdproject/nx. Run `pnpm install` at the repo root.')
-  }
-  const { addToDesktopConfig } = require(utilPath)
-  addToDesktopConfig(configPath, KINDS[kind].configKey, pkgFullName)
+  addToDesktopConfig(configPath, workspaceRoot, KINDS[kind].configKey, pkgFullName)
 
   // Run dev:prepare
   console.log(`Running dev:prepare on ${pkgFullName}...`)
