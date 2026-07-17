@@ -144,8 +144,8 @@ func (m *TuiModel) renderResolveDependencyModal() string {
 		options = append(options, struct{ Name, Label string }{"local", "Use Existing Local Folder"})
 	}
 	options = append(options,
-		struct{ Name, Label string }{"git-ssh", "Git SSH"},
 		struct{ Name, Label string }{"git-https", "Git HTTPS"},
+		struct{ Name, Label string }{"git-ssh", "Git SSH"},
 		struct{ Name, Label string }{"npm", "NPM Package"},
 	)
 	for i, opt := range options {

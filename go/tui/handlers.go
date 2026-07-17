@@ -274,8 +274,8 @@ func (m *TuiModel) handleResolveDependencyKeys(msg tea.KeyMsg) (tea.Model, tea.C
 		methods = append(methods, struct{ Name, Label string }{"local", "Use Existing Local Folder"})
 	}
 	methods = append(methods,
-		struct{ Name, Label string }{"git-ssh", "Git SSH"},
 		struct{ Name, Label string }{"git-https", "Git HTTPS"},
+		struct{ Name, Label string }{"git-ssh", "Git SSH"},
 		struct{ Name, Label string }{"npm", "NPM Package"},
 	)
 
