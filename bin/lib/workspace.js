@@ -86,10 +86,7 @@ export const KINDS = {
 export function findWorkspaceRoot(startDir = process.cwd()) {
   let dir = startDir
   for (;;) {
-    if (
-      existsSync(join(dir, 'pnpm-workspace.yaml')) &&
-      existsSync(join(dir, 'nx.json'))
-    ) {
+    if (existsSync(join(dir, 'pnpm-workspace.yaml'))) {
       return dir
     }
     const parent = dirname(dir)
