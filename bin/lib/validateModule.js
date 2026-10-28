@@ -439,7 +439,7 @@ export function validateOwdModule(packageDir, options = {}) {
   }
 
   const peerDeps = /** @type {Record<string, string>} */ (pkg.peerDependencies ?? {})
-  if (!peerDeps['@owdproject/core'] && !peerDeps['nuxt-desktop']) {
+  if (!peerDeps['@owdproject/core'] && !peerDeps['@owdproject/nuxt']) {
     issue(
       'warning',
       'peer-core',
@@ -615,7 +615,7 @@ export function validateOwdModule(packageDir, options = {}) {
             `playground/package.json must depend on ${pkgName}`,
           )
         }
-        if (!deps['@owdproject/core'] && !deps['nuxt-desktop']) {
+        if (!deps['@owdproject/core'] && !deps['@owdproject/nuxt']) {
           issue(
             'error',
             'playground-core-dep',
@@ -639,7 +639,7 @@ export function validateOwdModule(packageDir, options = {}) {
       issue('error', 'playground-nuxt-config', 'playground/nuxt.config.ts is required')
     } else {
       const nuxtCfg = readFileSync(nuxtConfigPath, 'utf8')
-      if (!nuxtCfg.includes('@owdproject/core') && !nuxtCfg.includes('nuxt-desktop')) {
+      if (!nuxtCfg.includes('@owdproject/core') && !nuxtCfg.includes('@owdproject/nuxt')) {
         issue(
           'error',
           'playground-nuxt-core',
