@@ -19,7 +19,7 @@ function fixAppPlugin(pluginPath, registerName) {
   writeFileSync(
     pluginPath,
     `import { defineNuxtPlugin } from 'nuxt/app'
-import { defineDesktopApp } from '@owdproject/core/kit/defineDesktopApp'
+import { defineDesktopApp } from 'nuxt-desktop/kit/defineDesktopApp'
 import ${configVar} from './app.config'
 
 export default defineNuxtPlugin({
@@ -38,7 +38,7 @@ function buildLaunchPlugin(cfg) {
   if (l.fsDemo) {
     return `import { nextTick } from 'vue'
 import { defineNuxtPlugin } from 'nuxt/app'
-import { useApplicationManager } from '@owdproject/core/runtime/composables/useApplicationManager'
+import { useApplicationManager } from 'nuxt-desktop/runtime/composables/useApplicationManager'
 import { openVfsFile } from '@owdproject/module-fs/runtime/utils/utilFsOpenFile'
 
 const APP_ID = '${l.appId}'
@@ -75,7 +75,7 @@ export default defineNuxtPlugin({
 
   return `import { nextTick } from 'vue'
 import { defineNuxtPlugin } from 'nuxt/app'
-import { useApplicationManager } from '@owdproject/core/runtime/composables/useApplicationManager'
+import { useApplicationManager } from 'nuxt-desktop/runtime/composables/useApplicationManager'
 
 const APP_ID = '${l.appId}'
 const WINDOW_MODEL = 'main'
@@ -126,6 +126,7 @@ function buildPackageJson(cfg, old) {
     '@nuxt/module-builder': '^1.0.2',
     '@nuxt/schema': '^4.3.0',
     '@owdproject/core': 'workspace:*',
+    'nuxt-desktop': 'workspace:*',
     '@owdproject/theme-nova': 'workspace:*',
     nuxt: '^4.3.0',
     typescript: '~5.9.3',
@@ -158,7 +159,7 @@ function buildPackageJson(cfg, old) {
     },
     dependencies: deps,
     devDependencies: devDeps,
-    peerDependencies: old.peerDependencies || { '@owdproject/core': '^3.2.0' },
+    peerDependencies: old.peerDependencies || { '@owdproject/core': '>=4.0.0-alpha.0', 'nuxt-desktop': '>=1.0.0' },
   }
   if (cfg.private || old.private) pkg.private = true
   if (old.peerDependenciesMeta) pkg.peerDependenciesMeta = old.peerDependenciesMeta
@@ -168,6 +169,7 @@ function buildPackageJson(cfg, old) {
 function buildPlaygroundPkg(cfg) {
   const deps = {
     '@owdproject/core': 'workspace:*',
+    'nuxt-desktop': 'workspace:*',
     [cfg.name]: 'workspace:*',
     nuxt: '^4.4.4',
     ...(cfg.playgroundExtraDevDeps || {}),
@@ -187,7 +189,7 @@ function buildDesktopConfig(cfg) {
   const theme = cfg.playgroundTheme || '@owdproject/theme-nova'
   const apps = cfg.playgroundApps || [cfg.name]
   const modules = cfg.playgroundModules || []
-  let s = `import { defineDesktopConfig } from '@owdproject/core'\n\nexport default defineDesktopConfig({\n  theme: '${theme}',\n`
+  let s = `import { defineDesktopConfig } from 'nuxt-desktop'\n\nexport default defineDesktopConfig({\n  theme: '${theme}',\n`
   if (apps.length) s += `  apps: [${apps.map((a) => `'${a}'`).join(', ')}],\n`
   if (modules.length) s += `  modules: [${modules.map((m) => `'${m}'`).join(', ')}],\n`
   s += '  systemBar: { enabled: true, startButton: true },\n'
@@ -201,7 +203,7 @@ function buildDesktopConfig(cfg) {
 }
 
 const NUXT = `export default defineNuxtConfig({
-  modules: ['@owdproject/core'],
+  modules: ['nuxt-desktop'],
   app: { baseURL: process.env.NUXT_APP_BASE_URL || '/' },
   i18n: { strategy: 'no_prefix' },
   devtools: { enabled: true },
