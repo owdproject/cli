@@ -32,9 +32,9 @@ export const STARTER_DESKTOP_DEPS = [
 
 /** Used when a starter package is not on npm yet (before first publish). */
 export const TEMPLATE_NPM_FALLBACK_VERSIONS = {
-  '@owdproject/core': '4.0.0-alpha.0',
-  '@owdproject/nuxt': '1.0.0',
-  '@owdproject/theme-nova': '0.0.1',
+  '@owdproject/core': '4.0.0-alpha.3',
+  '@owdproject/nuxt': '4.0.0-alpha.3',
+  '@owdproject/theme-nova': '4.0.0-alpha.3',
 }
 
 const DESKTOP_COPY_FILES = [

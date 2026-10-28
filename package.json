@@ -1,6 +1,6 @@
 {
   "name": "@owdproject/cli",
-  "version": "0.2.1",
+  "version": "4.0.0-alpha.3",
   "description": "Control Panel and Command Line Interface for Open Web Desktop",
   "keywords": [
     "owd",
@@ -40,7 +40,12 @@
     "mitt": "^3.0.1",
     "nanoid": "^5.1.11",
     "shellwords": "^1.1.1",
-    "@owdproject/core": "workspace:*",
+    "@owdproject/core": "^4.0.0-alpha.3",
     "ts-morph": "^25.0.1"
+  },
+  "publishConfig": {
+    "access": "public",
+    "tag": "alpha",
+    "registry": "https://registry.npmjs.org/"
   }
 }

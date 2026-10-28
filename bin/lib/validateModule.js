@@ -443,7 +443,7 @@ export function validateOwdModule(packageDir, options = {}) {
     issue(
       'warning',
       'peer-core',
-      'peerDependencies should declare @owdproject/core or nuxt-desktop',
+      'peerDependencies should declare @owdproject/nuxt for shell APIs',
     )
   }
 
@@ -615,11 +615,11 @@ export function validateOwdModule(packageDir, options = {}) {
             `playground/package.json must depend on ${pkgName}`,
           )
         }
-        if (!deps['@owdproject/core'] && !deps['@owdproject/nuxt']) {
+        if (!deps['@owdproject/nuxt']) {
           issue(
             'error',
             'playground-core-dep',
-            'playground/package.json must depend on @owdproject/core or nuxt-desktop',
+            'playground/package.json must depend on @owdproject/nuxt',
           )
         }
         if (kind === 'app' && !deps['@owdproject/theme-nova']) {
@@ -639,11 +639,11 @@ export function validateOwdModule(packageDir, options = {}) {
       issue('error', 'playground-nuxt-config', 'playground/nuxt.config.ts is required')
     } else {
       const nuxtCfg = readFileSync(nuxtConfigPath, 'utf8')
-      if (!nuxtCfg.includes('@owdproject/core') && !nuxtCfg.includes('@owdproject/nuxt')) {
+      if (!nuxtCfg.includes('@owdproject/nuxt')) {
         issue(
           'error',
           'playground-nuxt-core',
-          'playground/nuxt.config.ts must register @owdproject/core or nuxt-desktop',
+          'playground/nuxt.config.ts must register @owdproject/nuxt',
         )
       }
       if (!/\bssr\s*:\s*false\b/.test(nuxtCfg)) {
@@ -794,7 +794,7 @@ export function validateOwdModule(packageDir, options = {}) {
           issue(
             'warning',
             'launch-auto-start',
-            `${launchFile}: prefer autoStartPlaygroundApps(nuxtApp, [...]) from @owdproject/core (handles workArea + stale windows)`,
+            `${launchFile}: prefer autoStartPlaygroundApps(nuxtApp, [...]) from @owdproject/nuxt (handles workArea + stale windows)`,
           )
         }
       }

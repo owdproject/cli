@@ -159,7 +159,7 @@ function buildPackageJson(cfg, old) {
     },
     dependencies: deps,
     devDependencies: devDeps,
-    peerDependencies: old.peerDependencies || { '@owdproject/core': '>=4.0.0-alpha.0', '@owdproject/nuxt': '>=1.0.0' },
+    peerDependencies: old.peerDependencies || { '@owdproject/core': '>=4.0.0-alpha.0', '@owdproject/nuxt': '^4.0.0-alpha.3' },
   }
   if (cfg.private || old.private) pkg.private = true
   if (old.peerDependenciesMeta) pkg.peerDependenciesMeta = old.peerDependenciesMeta
