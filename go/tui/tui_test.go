@@ -43,27 +43,27 @@ func TestEngineQueueMessages(t *testing.T) {
 }
 
 func TestBuildConfigFromPending(t *testing.T) {
-	theme := "@owdproject/theme-nova"
+	theme := "@owdproject/theme-nuxt-nova"
 	ctx := &bridge.WorkspaceContext{
 		Config: bridge.Config{
 			Theme:   &theme,
-			Apps:    []string{"@owdproject/app-about"},
+			Apps:    []string{"@owdproject/app-nuxt-about"},
 			Modules: []string{},
 		},
 	}
 	catalog := &bridge.CatalogResponse{
 		Entries: []bridge.CatalogEntry{
-			{Name: "@owdproject/app-todo", ShortName: "app-todo", Kind: "app"},
+			{Name: "@owdproject/app-nuxt-todo", ShortName: "app-todo", Kind: "app"},
 		},
 	}
 	pending := map[string]bool{
-		"@owdproject/app-todo": true,
+		"@owdproject/app-nuxt-todo": true,
 	}
 	config, removes := buildConfigFromPending(ctx, catalog, pending, nil)
 	if len(removes) != 0 {
 		t.Fatalf("expected no removals, got %v", removes)
 	}
-	if !containsStr(config.Apps, "@owdproject/app-todo") {
+	if !containsStr(config.Apps, "@owdproject/app-nuxt-todo") {
 		t.Fatalf("expected app-todo in apps, got %v", config.Apps)
 	}
 }

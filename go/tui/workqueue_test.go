@@ -28,10 +28,10 @@ func TestWorkQueueProgress(t *testing.T) {
 
 func TestWorkQueueAppendUnique(t *testing.T) {
 	q := NewWorkQueue()
-	if !q.AppendUnique(WorkItem{Name: "@owdproject/app-about", ShortName: "app-about"}) {
+	if !q.AppendUnique(WorkItem{Name: "@owdproject/app-nuxt-about", ShortName: "app-about"}) {
 		t.Fatal("first append should succeed")
 	}
-	if q.AppendUnique(WorkItem{Name: "@owdproject/app-about", ShortName: "app-about"}) {
+	if q.AppendUnique(WorkItem{Name: "@owdproject/app-nuxt-about", ShortName: "app-about"}) {
 		t.Fatal("duplicate append should fail")
 	}
 	if len(q.Items) != 1 {

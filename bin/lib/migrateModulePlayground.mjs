@@ -39,7 +39,7 @@ function buildLaunchPlugin(cfg) {
     return `import { nextTick } from 'vue'
 import { defineNuxtPlugin } from 'nuxt/app'
 import { useApplicationManager } from '@owdproject/nuxt/runtime/composables/useApplicationManager'
-import { openVfsFile } from '@owdproject/module-fs/runtime/utils/utilFsOpenFile'
+import { openVfsFile } from '@owdproject/module-nuxt-fs/runtime/utils/utilFsOpenFile'
 
 const APP_ID = '${l.appId}'
 
@@ -127,7 +127,7 @@ function buildPackageJson(cfg, old) {
     '@nuxt/schema': '^4.3.0',
     '@owdproject/core': 'workspace:*',
     '@owdproject/nuxt': 'workspace:*',
-    '@owdproject/theme-nova': 'workspace:*',
+    '@owdproject/theme-nuxt-nova': 'workspace:*',
     nuxt: '^4.3.0',
     typescript: '~5.9.3',
     ...(cfg.devDependencies || {}),
@@ -174,7 +174,7 @@ function buildPlaygroundPkg(cfg) {
     nuxt: '^4.4.4',
     ...(cfg.playgroundExtraDevDeps || {}),
   }
-  if (!cfg.playgroundTheme) deps['@owdproject/theme-nova'] = 'workspace:*'
+  if (!cfg.playgroundTheme) deps['@owdproject/theme-nuxt-nova'] = 'workspace:*'
   if (cfg.playgroundTheme) deps[cfg.playgroundTheme] = 'workspace:*'
   return {
     name: `${cfg.name}-playground`,
@@ -186,7 +186,7 @@ function buildPlaygroundPkg(cfg) {
 }
 
 function buildDesktopConfig(cfg) {
-  const theme = cfg.playgroundTheme || '@owdproject/theme-nova'
+  const theme = cfg.playgroundTheme || '@owdproject/theme-nuxt-nova'
   const apps = cfg.playgroundApps || [cfg.name]
   const modules = cfg.playgroundModules || []
   let s = `import { defineDesktopConfig } from '@owdproject/nuxt'\n\nexport default defineDesktopConfig({\n  theme: '${theme}',\n`

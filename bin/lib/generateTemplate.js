@@ -25,8 +25,8 @@ const BLUEPRINT_ROOT = resolve(__dirname, '../../../core/template-blueprint')
 export const STARTER_DESKTOP_DEPS = [
   '@owdproject/core',
   '@owdproject/nuxt',
-  '@owdproject/theme-nova',
-  '@owdproject/app-about',
+  '@owdproject/theme-nuxt-nova',
+  '@owdproject/app-nuxt-about',
   'h3',
 ]
 
@@ -34,7 +34,7 @@ export const STARTER_DESKTOP_DEPS = [
 export const TEMPLATE_NPM_FALLBACK_VERSIONS = {
   '@owdproject/core': '4.0.0-alpha.3',
   '@owdproject/nuxt': '4.0.0-alpha.3',
-  '@owdproject/theme-nova': '4.0.0-alpha.3',
+  '@owdproject/theme-nuxt-nova': '4.0.0-alpha.3',
 }
 
 const DESKTOP_COPY_FILES = [

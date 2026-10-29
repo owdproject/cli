@@ -130,7 +130,7 @@ OPTIONS
   <git-url>       Full clone URL
 
 LEGACY (still supported)
-  ${name} install-app @owdproject/app-todo
+  ${name} install-app @owdproject/app-nuxt-todo
   → prefer: ${name} add app-todo
 `
 }

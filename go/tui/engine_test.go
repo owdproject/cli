@@ -18,23 +18,23 @@ func TestResolveMethodLabel(t *testing.T) {
 func TestBuildConfigFromPendingRemovals(t *testing.T) {
 	ctx := &bridge.WorkspaceContext{
 		Config: bridge.Config{
-			Apps:    []string{"@owdproject/app-about", "@owdproject/app-todo"},
+			Apps:    []string{"@owdproject/app-nuxt-about", "@owdproject/app-nuxt-todo"},
 			Modules: []string{},
 		},
 	}
 	catalog := &bridge.CatalogResponse{
 		Entries: []bridge.CatalogEntry{
-			{Name: "@owdproject/app-todo", ShortName: "app-todo", Kind: "app"},
+			{Name: "@owdproject/app-nuxt-todo", ShortName: "app-todo", Kind: "app"},
 		},
 	}
 	pending := map[string]bool{
-		"@owdproject/app-todo": false,
+		"@owdproject/app-nuxt-todo": false,
 	}
 	config, removes := buildConfigFromPending(ctx, catalog, pending, nil)
-	if len(removes) != 1 || removes[0] != "@owdproject/app-todo" {
+	if len(removes) != 1 || removes[0] != "@owdproject/app-nuxt-todo" {
 		t.Fatalf("expected removal, got %v", removes)
 	}
-	if containsStr(config.Apps, "@owdproject/app-todo") {
+	if containsStr(config.Apps, "@owdproject/app-nuxt-todo") {
 		t.Fatalf("app-todo should be removed from config, got %v", config.Apps)
 	}
 }

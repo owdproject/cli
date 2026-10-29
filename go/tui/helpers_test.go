@@ -73,7 +73,7 @@ func TestCatalogSourceLabel(t *testing.T) {
 }
 
 func TestActiveThemeName(t *testing.T) {
-	nova := "@owdproject/theme-nova"
+	nova := "@owdproject/theme-nuxt-nova"
 	gnome := "@owdproject/theme-gnome"
 	ctx := &bridge.WorkspaceContext{
 		Config: bridge.Config{Theme: &nova},
