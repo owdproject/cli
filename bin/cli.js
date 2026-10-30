@@ -72,7 +72,7 @@ CONTROL PANEL (TUI)
   q / Esc                 Quit
   ${name} init [dir]      Create a new OWD project (then opens the control panel)
   ${name} create                  Create a new app or module (interactive wizard)
-  ${name} create <kind> <name>    Scaffold a new app or module (e.g. desktop create app todo)
+  ${name} create <kind> <name>    Scaffold a new app or module (e.g. desktop create app todo → @owdproject/nuxt-app-todo)
   ${name} add <package> [options]
   ${name} add <kind> <name> [options]
   ${name} validate [path...]  Check Nuxt module + playground layout
@@ -99,17 +99,17 @@ INSTALL SOURCES (control panel or CLI)
 EXAMPLES
   pnpm ${name}            # control panel
   pnpm ${name} dev        # monorepo desktop (from repo root)
-  cd apps/app-about && pnpm ${name} dev   # app-about playground
+  cd apps/owd-nuxt-app-about && pnpm ${name} dev   # about app playground
   pnpm ${name} dev --playground           # force playground when cwd is in a module
   ${name} init my-desktop # scaffold + pnpm install + control panel
-  ${name} add app-todo --npm
-  ${name} add app-todo --dev
-  ${name} add module-persistence --from dxlliv
+  ${name} add nuxt-app-todo --npm
+  ${name} add nuxt-app-todo --dev
+  ${name} add nuxt-module-pinia-persistence --from dxlliv
 
 KINDS (optional — inferred from the package name)
-  app       app-*     → apps/
-  module    module-*  → packages/  (kit-* and *-template are not listed in the control panel)
-  theme     theme-*   → themes/
+  app       nuxt-app-*    → apps/     (react-app-* for React desktops)
+  module    nuxt-module-* → packages/ (nuxt-kit-*, react-kit-* and *-template are not listed in the control panel)
+  theme     nuxt-theme-*  → themes/   (react-theme-* for React desktops)
 
 OPTIONS
   --playground      Start the module playground dev server (when cwd is inside an @owdproject/* package with playground/)
@@ -130,7 +130,7 @@ OPTIONS
   <git-url>       Full clone URL
 
 LEGACY (still supported)
-  ${name} install-app @owdproject/app-nuxt-todo
+  ${name} install-app @owdproject/nuxt-app-todo
   → prefer: ${name} add app-todo
 `
 }
@@ -349,7 +349,7 @@ export async function runCli(name, argv, options = {}) {
     if (forcePlayground && !devTarget) {
       fail(
         'No @owdproject module with playground/desktop.config.ts found from this directory.',
-        'Run from an app/theme/module package (e.g. apps/app-about), or omit --playground for the monorepo desktop.',
+        'Run from an app/theme/module package (e.g. apps/owd-nuxt-app-about), or omit --playground for the monorepo desktop.',
       )
     }
     runDevForeground(devTarget)

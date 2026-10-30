@@ -25,8 +25,8 @@ func TestReadDesktopPackageDeps(t *testing.T) {
 	pkgPath := filepath.Join(dir, "package.json")
 	content := `{
   "dependencies": {
-    "@owdproject/app-nuxt-about": "workspace:*",
-    "@owdproject/theme-nuxt-nova": "^1.0.0"
+    "@owdproject/nuxt-app-about": "workspace:*",
+    "@owdproject/nuxt-theme-nova": "^1.0.0"
   }
 }`
 	if err := os.WriteFile(pkgPath, []byte(content), 0644); err != nil {
@@ -36,10 +36,10 @@ func TestReadDesktopPackageDeps(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if deps["@owdproject/app-nuxt-about"] != "workspace:*" {
+	if deps["@owdproject/nuxt-app-about"] != "workspace:*" {
 		t.Fatalf("unexpected workspace dep: %v", deps)
 	}
-	if deps["@owdproject/theme-nuxt-nova"] != "^1.0.0" {
+	if deps["@owdproject/nuxt-theme-nova"] != "^1.0.0" {
 		t.Fatalf("unexpected npm dep: %v", deps)
 	}
 }
@@ -53,19 +53,19 @@ func TestBuildQueueFromConfigWorkspaceAndNpm(t *testing.T) {
 	pkgPath := filepath.Join(desktopDir, "package.json")
 	content := `{
   "dependencies": {
-    "@owdproject/app-nuxt-about": "workspace:*",
-    "@owdproject/theme-nuxt-nova": "^1.2.0"
+    "@owdproject/nuxt-app-about": "workspace:*",
+    "@owdproject/nuxt-theme-nova": "^1.2.0"
   }
 }`
 	if err := os.WriteFile(pkgPath, []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	theme := "@owdproject/theme-nuxt-nova"
+	theme := "@owdproject/nuxt-theme-nova"
 	ctx := &bridge.WorkspaceContext{
 		Config: bridge.Config{
 			Theme: &theme,
-			Apps:  []string{"@owdproject/app-nuxt-about"},
+			Apps:  []string{"@owdproject/nuxt-app-about"},
 		},
 		Paths: bridge.WorkspacePaths{PackageJson: pkgPath},
 	}
@@ -75,11 +75,11 @@ func TestBuildQueueFromConfigWorkspaceAndNpm(t *testing.T) {
 	if q.TotalCount() != 2 {
 		t.Fatalf("expected 2 queue items, got %d", q.TotalCount())
 	}
-	about := q.FindByName("@owdproject/app-nuxt-about")
+	about := q.FindByName("@owdproject/nuxt-app-about")
 	if about == nil || about.Source != SourcePending {
 		t.Fatalf("expected pending workspace item, got %+v", about)
 	}
-	nova := q.FindByName("@owdproject/theme-nuxt-nova")
+	nova := q.FindByName("@owdproject/nuxt-theme-nova")
 	if nova == nil || nova.Kind != KindNpm {
 		t.Fatalf("expected npm item, got %+v", nova)
 	}

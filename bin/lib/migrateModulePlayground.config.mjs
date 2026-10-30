@@ -5,7 +5,7 @@ export const configs = [
   {
     path: 'apps/app-todo',
     slug: 'app-todo',
-    name: '@owdproject/app-nuxt-todo',
+    name: '@owdproject/nuxt-app-todo',
     moduleName: 'desktop-app-todo',
     version: '0.1.3',
     keywords: ['owd-client', 'owd-apps', 'owd-modules'],
@@ -21,7 +21,7 @@ export const configs = [
   {
     path: 'apps/app-terminal',
     slug: 'app-terminal',
-    name: '@owdproject/app-nuxt-terminal',
+    name: '@owdproject/nuxt-app-terminal',
     moduleName: 'desktop-app-terminal',
     version: '0.1.3',
     launch: {
@@ -36,7 +36,7 @@ export const configs = [
   {
     path: 'apps/app-debug',
     slug: 'app-debug',
-    name: '@owdproject/app-nuxt-debug',
+    name: '@owdproject/nuxt-app-debug',
     moduleName: 'desktop-app-debug',
     version: '0.1.0',
     launch: {
@@ -51,7 +51,7 @@ export const configs = [
   {
     path: 'apps/app-dino',
     slug: 'app-dino',
-    name: '@owdproject/app-nuxt-dino',
+    name: '@owdproject/nuxt-app-dino',
     moduleName: 'desktop-app-dino',
     version: '0.0.1',
     private: true,
@@ -66,7 +66,7 @@ export const configs = [
   {
     path: 'apps/app-soundcloud',
     slug: 'app-soundcloud',
-    name: '@owdproject/app-nuxt-soundcloud',
+    name: '@owdproject/nuxt-app-soundcloud',
     moduleName: 'desktop-app-soundcloud',
     version: '0.1.0',
     launch: {
@@ -81,7 +81,7 @@ export const configs = [
   {
     path: 'apps/app-youtube',
     slug: 'app-youtube',
-    name: '@owdproject/app-nuxt-youtube',
+    name: '@owdproject/nuxt-app-youtube',
     moduleName: 'desktop-app-youtube',
     version: '0.1.0',
     launch: {
@@ -96,15 +96,15 @@ export const configs = [
   {
     path: 'apps/app-classic-audioplayer',
     slug: 'app-classic-audioplayer',
-    name: '@owdproject/app-nuxt-classic-audioplayer',
+    name: '@owdproject/nuxt-app-classic-audioplayer',
     moduleName: 'desktop-app-classic-audioplayer',
     version: '0.0.4',
-    playgroundModules: ['@owdproject/module-nuxt-fs', '@owdproject/module-persistence'],
-    playgroundApps: ['@owdproject/app-nuxt-classic-audioplayer'],
+    playgroundModules: ['@owdproject/nuxt-module-fs', '@owdproject/module-persistence'],
+    playgroundApps: ['@owdproject/nuxt-app-classic-audioplayer'],
     fsMounts: { '/mnt/test': '/test.zip' },
     copyTestZip: true,
     playgroundExtraDevDeps: {
-      '@owdproject/module-nuxt-fs': 'workspace:*',
+      '@owdproject/nuxt-module-fs': 'workspace:*',
       '@owdproject/module-persistence': 'workspace:*',
     },
     launch: {
@@ -120,7 +120,7 @@ export const configs = [
   {
     path: 'apps/app-classic-videoplayer',
     slug: 'app-classic-videoplayer',
-    name: '@owdproject/app-nuxt-classic-videoplayer',
+    name: '@owdproject/nuxt-app-classic-videoplayer',
     moduleName: 'desktop-app-classic-videoplayer',
     version: '0.0.4',
     launch: {
@@ -138,12 +138,12 @@ export const configs = [
     name: '@owdproject/app-explorer',
     moduleName: 'desktop-app-explorer',
     version: '0.0.4',
-    playgroundModules: ['@owdproject/module-nuxt-fs', '@owdproject/module-persistence'],
+    playgroundModules: ['@owdproject/nuxt-module-fs', '@owdproject/module-persistence'],
     playgroundApps: ['@owdproject/app-explorer'],
     fsMounts: { '/mnt/test': '/test.zip' },
     copyTestZip: true,
     playgroundExtraDevDeps: {
-      '@owdproject/module-nuxt-fs': 'workspace:*',
+      '@owdproject/nuxt-module-fs': 'workspace:*',
       '@owdproject/module-persistence': 'workspace:*',
     },
     dependencies: {
@@ -160,20 +160,20 @@ export const configs = [
   {
     path: 'apps/app-atproto',
     slug: 'app-atproto',
-    name: '@owdproject/app-nuxt-atproto',
+    name: '@owdproject/nuxt-app-atproto',
     moduleName: 'desktop-app-atproto',
     version: '0.0.3',
     playgroundTheme: '@owdproject/theme-win95',
     playgroundModules: ['@owdproject/module-atproto'],
-    playgroundApps: ['@owdproject/app-nuxt-terminal', '@owdproject/app-nuxt-atproto'],
+    playgroundApps: ['@owdproject/nuxt-app-terminal', '@owdproject/nuxt-app-atproto'],
     dependencies: {
-      '@owdproject/kit-nuxt-tailwind': 'workspace:*',
+      '@owdproject/nuxt-kit-tailwind': 'workspace:*',
       '@owdproject/module-atproto': 'workspace:*',
     },
     playgroundExtraDevDeps: {
       '@owdproject/module-atproto': 'workspace:*',
       '@owdproject/theme-win95': 'workspace:*',
-      '@owdproject/app-nuxt-terminal': 'workspace:*',
+      '@owdproject/nuxt-app-terminal': 'workspace:*',
     },
     launch: {
       file: 'launch-atproto.client.ts',

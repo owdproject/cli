@@ -1,12 +1,12 @@
 import { execSync } from 'node:child_process'
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
-import { findWorkspaceRoot } from './workspace.js'
+import { findWorkspaceRoot, withoutFrameworkPrefix } from './workspace.js'
 
 const SCOPE = '@owdproject/'
 
 export const DESKTOP_CORE_PACKAGE = '@owdproject/core'
-export const DESKTOP_KIT_PRIMEVUE_PACKAGE = '@owdproject/kit-nuxt-primevue'
+export const DESKTOP_KIT_PRIMEVUE_PACKAGE = '@owdproject/nuxt-kit-primevue'
 
 const REQUIRED_SCRIPTS = ['dev', 'dev:prepare', 'dev:generate', 'prepack']
 const INFRASTRUCTURE_PLAYBOOK_SCRIPTS = ['dev:prepare', 'prepack']
@@ -35,8 +35,9 @@ export function isDesktopInfrastructurePackage(pkgName) {
  */
 export function inferModuleKind(pkgName) {
   const short = pkgName.startsWith(SCOPE) ? pkgName.slice(SCOPE.length) : pkgName
-  if (short.startsWith('app-')) return 'app'
-  if (short.startsWith('theme-')) return 'theme'
+  const base = withoutFrameworkPrefix(short)
+  if (base.startsWith('app-')) return 'app'
+  if (base.startsWith('theme-')) return 'theme'
   return 'module'
 }
 
@@ -495,21 +496,21 @@ export function validateOwdModule(packageDir, options = {}) {
       moduleSrc.includes('registerTailwindPath') ||
       moduleSrc.includes('registerThemeTailwindPath')
     const hasKitPrimevue =
-      moduleSrc.includes("installModule('@owdproject/kit-nuxt-primevue'") ||
-      moduleSrc.includes('installModule("@owdproject/kit-nuxt-primevue"')
+      moduleSrc.includes("installModule('@owdproject/nuxt-kit-primevue'") ||
+      moduleSrc.includes('installModule("@owdproject/nuxt-kit-primevue"')
     if (kind === 'theme') {
       if (!hasKitPrimevue) {
         issue(
           'warning',
           'kit-nuxt-primevue',
-          'theme src/module.ts should install @owdproject/kit-nuxt-primevue for PrimeVue + Tailwind',
+          'theme src/module.ts should install @owdproject/nuxt-kit-primevue for PrimeVue + Tailwind',
         )
       }
       if (!hasKitTailwind) {
         issue(
           'warning',
           'tailwind-path',
-          'theme src/module.ts should call registerThemeTailwindPath from @owdproject/kit-nuxt-primevue/kit/registerTailwindPath',
+          'theme src/module.ts should call registerThemeTailwindPath from @owdproject/nuxt-kit-primevue/kit/registerTailwindPath',
         )
       }
 
@@ -561,7 +562,7 @@ export function validateOwdModule(packageDir, options = {}) {
       issue(
         'warning',
         'tailwind-path',
-        'src/module.ts should call registerTailwindPath from @owdproject/kit-nuxt-tailwind/kit/registerTailwindPath for Vue components',
+        'src/module.ts should call registerTailwindPath from @owdproject/nuxt-kit-tailwind/kit/registerTailwindPath for Vue components',
       )
     }
 
@@ -622,11 +623,11 @@ export function validateOwdModule(packageDir, options = {}) {
             'playground/package.json must depend on @owdproject/nuxt',
           )
         }
-        if (kind === 'app' && !deps['@owdproject/theme-nuxt-nova']) {
+        if (kind === 'app' && !deps['@owdproject/nuxt-theme-nova']) {
           issue(
             'warning',
             'playground-theme-nova',
-            'app playgrounds should use @owdproject/theme-nuxt-nova in dependencies',
+            'app playgrounds should use @owdproject/nuxt-theme-nova in dependencies',
           )
         }
       } catch {
@@ -717,7 +718,7 @@ export function validateOwdModule(packageDir, options = {}) {
       issue(
         'warning',
         'app-kit-nuxt-primevue-dep',
-        'remove @owdproject/kit-nuxt-primevue from app dependencies — PrimeVue comes from the theme at runtime; apps only need @owdproject/kit-nuxt-tailwind',
+        'remove @owdproject/nuxt-kit-primevue from app dependencies — PrimeVue comes from the theme at runtime; apps only need @owdproject/nuxt-kit-tailwind',
       )
     }
 

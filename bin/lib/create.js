@@ -64,8 +64,12 @@ function copyAndScaffold(srcDir, destDir, replacements) {
     }
 
     const srcPath = join(srcDir, entry)
+    // Longest placeholder first so e.g. `desktop-app-template` wins over `app-template`.
+    const orderedReplacements = Object.entries(replacements).sort(
+      (a, b) => b[0].length - a[0].length,
+    )
     let destEntry = entry
-    for (const [placeholder, val] of Object.entries(replacements)) {
+    for (const [placeholder, val] of orderedReplacements) {
       destEntry = destEntry.replaceAll(placeholder, val)
     }
     const destPath = join(destDir, destEntry)
@@ -78,7 +82,7 @@ function copyAndScaffold(srcDir, destDir, replacements) {
       const isText = !fileContent.slice(0, 512).includes(0)
       if (isText) {
         let textContent = fileContent.toString('utf8')
-        for (const [placeholder, val] of Object.entries(replacements)) {
+        for (const [placeholder, val] of orderedReplacements) {
           textContent = textContent.replaceAll(placeholder, val)
         }
         writeFileSync(destPath, textContent, 'utf8')
@@ -125,14 +129,16 @@ export async function runCreateCli(options = {}) {
     rl.close()
   }
 
-  // Normalize prefix from name (e.g. if user entered "app-todo" instead of "todo")
-  if (kind === 'app' && name.startsWith('app-')) {
-    name = name.slice(4)
-  } else if (kind === 'module' && name.startsWith('module-')) {
-    name = name.slice(7)
+  // Normalize prefix from name (e.g. if user entered "nuxt-app-todo" or "app-todo"
+  // instead of "todo"). New Nuxt extension packages are framework-first.
+  for (const prefix of [`nuxt-${kind}-`, `${kind}-`]) {
+    if (name.startsWith(prefix)) {
+      name = name.slice(prefix.length)
+      break
+    }
   }
 
-  const pkgShortName = `${kind}-${name}`
+  const pkgShortName = `nuxt-${kind}-${name}`
   const pkgFullName = `@owdproject/${pkgShortName}`
   const workspaceDir = KINDS[kind].workspaceDir
   const targetDir = join(workspaceRoot, workspaceDir, pkgShortName)

@@ -176,7 +176,7 @@ func getOwdDepsLocal(workspaceRoot, shortName, kind string) ([]string, bool) {
 			if !strings.HasPrefix(name, "@owdproject/") || seen[name] {
 				continue
 			}
-			short := name[strings.LastIndex(name, "/")+1:]
+			short := baseKindName(name[strings.LastIndex(name, "/")+1:])
 			if strings.HasPrefix(short, "module-") || strings.HasPrefix(short, "kit-") || strings.HasPrefix(short, "app-") || strings.HasPrefix(short, "theme-") {
 				deps = append(deps, name)
 				seen[name] = true
@@ -219,7 +219,7 @@ func getOwdDepsFromNpm(pkgName string) ([]string, error) {
 		if !strings.HasPrefix(name, "@owdproject/") || seen[name] {
 			continue
 		}
-		short := name[strings.LastIndex(name, "/")+1:]
+		short := baseKindName(name[strings.LastIndex(name, "/")+1:])
 		if strings.HasPrefix(short, "module-") || strings.HasPrefix(short, "kit-") || strings.HasPrefix(short, "app-") || strings.HasPrefix(short, "theme-") {
 			deps = append(deps, name)
 			seen[name] = true

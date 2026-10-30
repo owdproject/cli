@@ -8,6 +8,19 @@ import {
 
 export const SCOPE = '@owdproject/'
 
+/** Framework segments used by framework-first OWD package names (nuxt-app-*, react-theme-*). */
+export const FRAMEWORKS = ['nuxt', 'react', 'vue', 'svelte', 'angular', 'astro']
+
+/**
+ * Strips a leading framework segment so kind/kit/module detection keeps working
+ * with framework-first names (nuxt-app-about -> app-about, react-theme-win95 -> theme-win95).
+ */
+export function withoutFrameworkPrefix(short) {
+  const idx = short.indexOf('-')
+  if (idx > 0 && FRAMEWORKS.includes(short.slice(0, idx))) return short.slice(idx + 1)
+  return short
+}
+
 /** Not loadable via desktop.config `modules` (core is the shell). */
 export const DESKTOP_NON_INSTALLABLE = new Set([
   '@owdproject/core',
@@ -37,21 +50,21 @@ export function docsBasePathFromConfig(config) {
 export function isDesktopKitPackage(pkgName) {
   const isScoped = pkgName.startsWith(SCOPE)
   const short = isScoped ? pkgName.slice(SCOPE.length) : pkgName
-  if (!isScoped && !pkgName.startsWith('kit-')) return false
-  return short.startsWith('kit-')
+  if (!isScoped && !withoutFrameworkPrefix(short).startsWith('kit-')) return false
+  return withoutFrameworkPrefix(short).startsWith('kit-')
 }
 
 /** Scaffold / blueprint packages — not loadable desktop modules. */
 export function isDesktopTemplatePackage(pkgName) {
   const isScoped = pkgName.startsWith(SCOPE)
   const short = isScoped ? pkgName.slice(SCOPE.length) : pkgName
-  if (!isScoped && !pkgName.endsWith('-template')) return false
   return short.endsWith('-template')
 }
 
 export function isInstallableDesktopModule(pkgName) {
   const isScoped = pkgName.startsWith(SCOPE)
-  if (!isScoped && !pkgName.startsWith('module-')) return false
+  const short = isScoped ? pkgName.slice(SCOPE.length) : pkgName
+  if (!isScoped && !withoutFrameworkPrefix(short).startsWith('module-')) return false
   return (
     !DESKTOP_NON_INSTALLABLE.has(pkgName) &&
     !isDesktopKitPackage(pkgName) &&
@@ -196,8 +209,9 @@ export function fullName(short) {
 }
 
 export function inferKind(shortName) {
-  if (shortName.startsWith('app-')) return 'app'
-  if (shortName.startsWith('theme-')) return 'theme'
+  const base = withoutFrameworkPrefix(shortName)
+  if (base.startsWith('app-')) return 'app'
+  if (base.startsWith('theme-')) return 'theme'
   return 'module'
 }
 

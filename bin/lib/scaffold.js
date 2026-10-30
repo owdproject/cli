@@ -14,7 +14,7 @@ import { fileURLToPath } from 'node:url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const CLIENT_TEMPLATE = resolve(__dirname, '../../../../template')
-const DEFAULT_CLIENT_REPO = 'https://github.com/owdproject/client.git'
+const DEFAULT_CLIENT_REPO = 'https://github.com/owdproject/nuxt-desktop.git'
 
 /**
  * @param {string} [startDir]

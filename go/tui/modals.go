@@ -212,7 +212,7 @@ func (m *TuiModel) renderManagePackageModal(pkg *bridge.CatalogEntry) string {
 	// Kits
 	var kits []string
 	for _, dep := range m.promptPkgDeps {
-		if strings.HasPrefix(dep, "@owdproject/kit-") {
+		if isOwdKit(dep) {
 			shortKit := dep[strings.LastIndex(dep, "/")+1:]
 			kits = append(kits, shortKit)
 		}
@@ -263,7 +263,7 @@ func (m *TuiModel) renderManagePackageModal(pkg *bridge.CatalogEntry) string {
 	// Deps (excluding kits)
 	var otherDeps []string
 	for _, d := range m.promptPkgDeps {
-		if !strings.HasPrefix(d, "@owdproject/kit-") {
+		if !isOwdKit(d) {
 			s := d
 			if idx := strings.LastIndex(d, "/"); idx >= 0 {
 				s = d[idx+1:]

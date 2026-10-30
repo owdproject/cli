@@ -2086,10 +2086,10 @@ export async function runCp(commandName = 'desktop') {
 
   const npmDownloads = {
     '@owdproject/core': 410,
-    '@owdproject/app-nuxt-about': 8,
-    '@owdproject/app-nuxt-todo': 12,
-    '@owdproject/app-nuxt-terminal': 24,
-    '@owdproject/module-nuxt-fs': 52,
+    '@owdproject/nuxt-app-about': 8,
+    '@owdproject/nuxt-app-todo': 12,
+    '@owdproject/nuxt-app-terminal': 24,
+    '@owdproject/nuxt-module-fs': 52,
     '@owdproject/module-persistence': 38,
     '@owdproject/theme-gnome': 14,
     '@owdproject/theme-win95': 36,

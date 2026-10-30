@@ -216,10 +216,10 @@ func kindDirForEntry(pkgName, shortName string, entries []bridge.CatalogEntry) s
 
 // kindDirForShortName infers the workspace subdirectory from the package short name.
 func kindDirForShortName(shortName string) string {
-	switch {
-	case strings.HasPrefix(shortName, "app-"):
+	switch base := baseKindName(shortName); {
+	case strings.HasPrefix(base, "app-"):
 		return "apps"
-	case strings.HasPrefix(shortName, "theme-"):
+	case strings.HasPrefix(base, "theme-"):
 		return "themes"
 	default:
 		return "packages" // module-*, kit-*, and anything else
@@ -600,7 +600,7 @@ export default defineDesktopConfig({
 		runtime.msgChan <- setupProgressMsg{Step: step, Total: totalSteps, Label: "Resetting package dependencies…"}
 		runtime.msgChan <- logLineMsg("ℹ Resetting desktop/package.json dependencies to core only…")
 		defaultPackageJson := `{
-  "name": "@owdproject/client",
+  "name": "@owdproject/nuxt-desktop",
   "private": true,
   "nx": {
     "name": "desktop"

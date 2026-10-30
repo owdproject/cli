@@ -53,6 +53,34 @@ func shortNameFromPkg(name string) string {
 	return name
 }
 
+// knownFrameworks are the framework segments used by framework-first OWD package
+// names (e.g. nuxt-app-about, react-theme-win95).
+var knownFrameworks = map[string]bool{
+	"nuxt":    true,
+	"react":   true,
+	"vue":     true,
+	"svelte":  true,
+	"angular": true,
+	"astro":   true,
+}
+
+// baseKindName strips a leading framework segment so kind/kit/module detection
+// keeps working with framework-first names (nuxt-app-about -> app-about).
+func baseKindName(short string) string {
+	if idx := strings.Index(short, "-"); idx >= 0 && knownFrameworks[short[:idx]] {
+		return short[idx+1:]
+	}
+	return short
+}
+
+// isOwdKit reports whether a scoped OWD package is a UI kit (kit-*, nuxt-kit-*, …).
+func isOwdKit(name string) bool {
+	if !strings.HasPrefix(name, "@owdproject/") {
+		return false
+	}
+	return strings.HasPrefix(baseKindName(shortNameFromPkg(name)), "kit-")
+}
+
 func kindDirForKind(kind string) string {
 	switch kind {
 	case "app":
@@ -76,9 +104,9 @@ func catalogEntryForName(catalog *bridge.CatalogResponse, name string) bridge.Ca
 	}
 	short := shortNameFromPkg(name)
 	kind := "module"
-	if strings.HasPrefix(short, "app-") {
+	if strings.HasPrefix(baseKindName(short), "app-") {
 		kind = "app"
-	} else if strings.HasPrefix(short, "theme-") {
+	} else if strings.HasPrefix(baseKindName(short), "theme-") {
 		kind = "theme"
 	}
 	return bridge.CatalogEntry{
@@ -212,7 +240,8 @@ func BuildStartupCheckQueue(
 					continue
 				}
 				short := shortNameFromPkg(dep)
-				if !strings.HasPrefix(short, "kit-") && !strings.HasPrefix(short, "module-") {
+				base := baseKindName(short)
+				if !strings.HasPrefix(base, "kit-") && !strings.HasPrefix(base, "module-") {
 					continue
 				}
 				if isLocallyAvailable(workspaceRoot, short) {
@@ -365,9 +394,9 @@ func DiscoverNestedDeps(
 		}
 		depShort := shortNameFromPkg(dep)
 		depKind := "module"
-		if strings.HasPrefix(depShort, "app-") {
+		if strings.HasPrefix(baseKindName(depShort), "app-") {
 			depKind = "app"
-		} else if strings.HasPrefix(depShort, "theme-") {
+		} else if strings.HasPrefix(baseKindName(depShort), "theme-") {
 			depKind = "theme"
 		}
 		logFn("⚠ Dependency discovered: " + depShort)

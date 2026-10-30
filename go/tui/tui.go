@@ -822,10 +822,10 @@ func (m *TuiModel) loadPackageDetails(pkg *bridge.CatalogEntry) {
 				}
 				m.promptPkgDeps = append(m.promptPkgDeps, name)
 			}
-			if name == "@owdproject/kit-nuxt-primevue" {
+			if name == "@owdproject/nuxt-kit-primevue" {
 				m.promptPkgHasPrimevue = true
 			}
-			if name == "@owdproject/kit-nuxt-tailwind" || name == "tailwindcss" {
+			if name == "@owdproject/nuxt-kit-tailwind" || name == "tailwindcss" {
 				m.promptPkgHasTailwind = true
 			}
 		}

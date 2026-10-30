@@ -14,6 +14,7 @@ import {
   fullName,
   shortName,
   inferKind,
+  withoutFrameworkPrefix,
   isInstallableDesktopModule,
   desktopMetaDir,
 } from './workspace.js'
@@ -416,7 +417,7 @@ export function filterCatalog(catalog, kind, options = {}) {
   const sortMode = normalizeCatalogSort(options.sortMode ?? 'updated')
   const filtered = catalog
     .filter((e) => e.kind === kind)
-    .filter((e) => kind !== 'module' || (isInstallableDesktopModule(e.name) && e.shortName.startsWith('module-')))
+    .filter((e) => kind !== 'module' || (isInstallableDesktopModule(e.name) && withoutFrameworkPrefix(e.shortName).startsWith('module-')))
 
   return sortCatalog(filtered, sortMode, options.config ?? null)
 }
