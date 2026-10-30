@@ -99,13 +99,13 @@ export const configs = [
     name: '@owdproject/nuxt-app-classic-audioplayer',
     moduleName: 'desktop-app-classic-audioplayer',
     version: '0.0.4',
-    playgroundModules: ['@owdproject/nuxt-module-fs', '@owdproject/module-persistence'],
+    playgroundModules: ['@owdproject/nuxt-module-fs', '@owdproject/nuxt-module-pinia-persistence'],
     playgroundApps: ['@owdproject/nuxt-app-classic-audioplayer'],
     fsMounts: { '/mnt/test': '/test.zip' },
     copyTestZip: true,
     playgroundExtraDevDeps: {
       '@owdproject/nuxt-module-fs': 'workspace:*',
-      '@owdproject/module-persistence': 'workspace:*',
+      '@owdproject/nuxt-module-pinia-persistence': 'workspace:*',
     },
     launch: {
       file: 'launch-audioplayer.client.ts',
@@ -138,13 +138,13 @@ export const configs = [
     name: '@owdproject/app-explorer',
     moduleName: 'desktop-app-explorer',
     version: '0.0.4',
-    playgroundModules: ['@owdproject/nuxt-module-fs', '@owdproject/module-persistence'],
+    playgroundModules: ['@owdproject/nuxt-module-fs', '@owdproject/nuxt-module-pinia-persistence'],
     playgroundApps: ['@owdproject/app-explorer'],
     fsMounts: { '/mnt/test': '/test.zip' },
     copyTestZip: true,
     playgroundExtraDevDeps: {
       '@owdproject/nuxt-module-fs': 'workspace:*',
-      '@owdproject/module-persistence': 'workspace:*',
+      '@owdproject/nuxt-module-pinia-persistence': 'workspace:*',
     },
     dependencies: {
     },

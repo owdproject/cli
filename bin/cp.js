@@ -2090,8 +2090,8 @@ export async function runCp(commandName = 'desktop') {
     '@owdproject/nuxt-app-todo': 12,
     '@owdproject/nuxt-app-terminal': 24,
     '@owdproject/nuxt-module-fs': 52,
-    '@owdproject/module-persistence': 38,
-    '@owdproject/theme-gnome': 14,
+    '@owdproject/nuxt-module-pinia-persistence': 38,
+    '@dxlliv/nuxt-theme-gnome': 14,
     '@owdproject/theme-win95': 36,
   }
 
