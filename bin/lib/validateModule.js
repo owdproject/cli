@@ -623,11 +623,11 @@ export function validateOwdModule(packageDir, options = {}) {
             'playground/package.json must depend on @owdproject/nuxt',
           )
         }
-        if (kind === 'app' && !deps['@owdproject/nuxt-theme-nova']) {
+        if (kind === 'app' && !deps['@owdproject/nuxt-theme-paper']) {
           issue(
             'warning',
-            'playground-theme-nova',
-            'app playgrounds should use @owdproject/nuxt-theme-nova in dependencies',
+            'playground-theme-paper',
+            'app playgrounds should use @owdproject/nuxt-theme-paper in dependencies',
           )
         }
       } catch {

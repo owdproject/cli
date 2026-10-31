@@ -46,7 +46,7 @@ pnpm desktop dev [--playground]
 Install apps, modules, or themes from npm, local directories, or custom repositories:
 ```bash
 pnpm desktop add app-todo --npm
-pnpm desktop add theme-nova --dev
+pnpm desktop add theme-paper --dev
 pnpm desktop add module-fs --from <github-user>
 ```
 

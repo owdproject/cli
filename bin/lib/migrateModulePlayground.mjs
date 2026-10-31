@@ -127,7 +127,7 @@ function buildPackageJson(cfg, old) {
     '@nuxt/schema': '^4.3.0',
     '@owdproject/core': 'workspace:*',
     '@owdproject/nuxt': 'workspace:*',
-    '@owdproject/nuxt-theme-nova': 'workspace:*',
+    '@owdproject/nuxt-theme-paper': 'workspace:*',
     nuxt: '^4.3.0',
     typescript: '~5.9.3',
     ...(cfg.devDependencies || {}),
@@ -174,7 +174,7 @@ function buildPlaygroundPkg(cfg) {
     nuxt: '^4.4.4',
     ...(cfg.playgroundExtraDevDeps || {}),
   }
-  if (!cfg.playgroundTheme) deps['@owdproject/nuxt-theme-nova'] = 'workspace:*'
+  if (!cfg.playgroundTheme) deps['@owdproject/nuxt-theme-paper'] = 'workspace:*'
   if (cfg.playgroundTheme) deps[cfg.playgroundTheme] = 'workspace:*'
   return {
     name: `${cfg.name}-playground`,
@@ -186,7 +186,7 @@ function buildPlaygroundPkg(cfg) {
 }
 
 function buildDesktopConfig(cfg) {
-  const theme = cfg.playgroundTheme || '@owdproject/nuxt-theme-nova'
+  const theme = cfg.playgroundTheme || '@owdproject/nuxt-theme-paper'
   const apps = cfg.playgroundApps || [cfg.name]
   const modules = cfg.playgroundModules || []
   let s = `import { defineDesktopConfig } from '@owdproject/nuxt'\n\nexport default defineDesktopConfig({\n  theme: '${theme}',\n`
