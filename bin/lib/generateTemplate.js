@@ -25,8 +25,10 @@ const BLUEPRINT_ROOT = resolve(__dirname, '../../../core/template-blueprint')
 export const STARTER_DESKTOP_DEPS = [
   '@owdproject/core',
   '@owdproject/nuxt',
-  '@owdproject/nuxt-theme-nova',
+  '@owdproject/nuxt-theme-paper',
   '@owdproject/nuxt-app-about',
+  'primevue',
+  'vue-i18n',
   'h3',
 ]
 
@@ -34,7 +36,7 @@ export const STARTER_DESKTOP_DEPS = [
 export const TEMPLATE_NPM_FALLBACK_VERSIONS = {
   '@owdproject/core': '4.0.0-alpha.3',
   '@owdproject/nuxt': '4.0.0-alpha.3',
-  '@owdproject/nuxt-theme-nova': '4.0.0-alpha.3',
+  '@owdproject/nuxt-theme-paper': '4.0.0-alpha.3',
 }
 
 const DESKTOP_COPY_FILES = [
@@ -206,7 +208,7 @@ function buildTemplateDesktopPackageJson(versions) {
   const pkg = {
     name: '@owdproject/nuxt-desktop',
     private: true,
-    nx: { name: 'desktop' },
+    type: 'module',
     scripts: {
       build: 'nuxt generate',
       dev: 'nuxt dev --host',
