@@ -7,6 +7,14 @@ const CACHE_TTL_MS = 60 * 60 * 1000
 const SCOPE = '@owdproject/'
 
 /**
+ * dist-tag used to resolve `@owdproject/*` versions for the generated template.
+ * During the v4 alpha cycle the packages are published under `alpha`, while
+ * `latest` still points at the previous stable (e.g. core 3.x). Override with
+ * `OWD_TEMPLATE_TAG` (e.g. `latest` after a stable release).
+ */
+export const OWD_TEMPLATE_TAG = process.env.OWD_TEMPLATE_TAG || 'alpha'
+
+/**
  * @param {string} version
  */
 export function formatCaretVersion(version) {
@@ -34,23 +42,40 @@ function isNpmLookupSkippableError(error) {
  * @param {{ optional?: boolean }} [options]
  * @returns {string | null}
  */
-export function fetchLatestVersion(pkgName, options = {}) {
-  let out
+function npmViewVersion(spec, optional) {
   try {
-    out = execSync(`npm view ${JSON.stringify(pkgName)} version`, {
+    return execSync(`npm view ${JSON.stringify(spec)} version`, {
       encoding: 'utf8',
       stdio: ['pipe', 'pipe', 'pipe'],
     }).trim()
   } catch (error) {
-    if (options.optional || isNpmLookupSkippableError(error)) return null
+    if (optional || isNpmLookupSkippableError(error)) return null
     const msg = error.stderr?.toString?.() || error.message || String(error)
-    throw new Error(`npm view failed for ${pkgName}: ${msg}`)
+    throw new Error(`npm view failed for ${spec}: ${msg}`)
   }
-  return formatCaretVersion(out)
+}
+
+/**
+ * Resolves the version to use for a package. When a `tag` is given (e.g. `alpha`
+ * for `@owdproject/*`), it is tried first and falls back to `latest` when the tag
+ * does not exist.
+ *
+ * @param {string} pkgName
+ * @param {{ optional?: boolean, tag?: string }} [options]
+ * @returns {string | null}
+ */
+export function fetchLatestVersion(pkgName, options = {}) {
+  if (options.tag) {
+    const tagged = npmViewVersion(`${pkgName}@${options.tag}`, true)
+    if (tagged) return formatCaretVersion(tagged)
+  }
+  const out = npmViewVersion(pkgName, options.optional)
+  return out ? formatCaretVersion(out) : null
 }
 
 /**
  * @param {string[]} pkgNames
+ * @param {{ optional?: boolean, tag?: string }} [options]
  * @returns {Record<string, string>}
  */
 export function fetchLatestVersions(pkgNames, options = {}) {
@@ -60,7 +85,8 @@ export function fetchLatestVersions(pkgNames, options = {}) {
   /** @type {Record<string, string>} */
   const result = {}
   for (const name of unique) {
-    const version = fetchLatestVersion(name, options)
+    const tag = options.tag ?? (isOwdScopedPackage(name) ? OWD_TEMPLATE_TAG : undefined)
+    const version = fetchLatestVersion(name, { ...options, tag })
     if (version) result[name] = version
   }
   return result
@@ -83,7 +109,11 @@ export function resolveLatestVersions(workspaceRoot, pkgNames, options = {}) {
   if (useCache && existsSync(path)) {
     try {
       const data = JSON.parse(readFileSync(path, 'utf8'))
-      if (Date.now() - data.fetchedAt < CACHE_TTL_MS && data.versions) {
+      if (
+        Date.now() - data.fetchedAt < CACHE_TTL_MS &&
+        data.versions &&
+        data.tag === OWD_TEMPLATE_TAG
+      ) {
         const cached = data.versions
         const missing = unique.filter((name) => !cached[name])
         if (missing.length === 0) {
@@ -112,7 +142,7 @@ export function writeVersionCache(workspaceRoot, versions) {
   mkdirSync(desktopMetaDir(workspaceRoot), { recursive: true })
   writeFileSync(
     cachePath(workspaceRoot),
-    JSON.stringify({ fetchedAt: Date.now(), versions }, null, 2) + '\n',
+    JSON.stringify({ fetchedAt: Date.now(), tag: OWD_TEMPLATE_TAG, versions }, null, 2) + '\n',
   )
 }
 

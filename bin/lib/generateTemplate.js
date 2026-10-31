@@ -32,6 +32,11 @@ export const STARTER_DESKTOP_DEPS = [
   'h3',
 ]
 
+/** Non-OWD starter deps pinned to the range expected by the default theme/kit. */
+export const STARTER_PINNED_VERSIONS = {
+  primevue: '^4.5.5',
+}
+
 /** Used when a starter package is not on npm yet (before first publish). */
 export const TEMPLATE_NPM_FALLBACK_VERSIONS = {
   '@owdproject/core': '4.0.0-alpha.3',
@@ -49,7 +54,6 @@ const DESKTOP_COPY_FILES = [
 const ROOT_COPY_FROM_MONOREPO = [
   'nx.json',
   'tsconfig.base.json',
-  'tsconfig.json',
   '.editorconfig',
   '.npmrc',
   '.prettierrc',
@@ -173,6 +177,10 @@ export async function resolveTemplateVersions(workspaceRoot, options = {}) {
     if (!versions[name]) {
       throw new Error(`Could not resolve version for ${name}`)
     }
+  }
+
+  for (const [name, range] of Object.entries(STARTER_PINNED_VERSIONS)) {
+    versions[name] = range
   }
 
   return versions
