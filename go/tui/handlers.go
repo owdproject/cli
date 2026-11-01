@@ -30,6 +30,11 @@ func (m *TuiModel) handlePromptKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	switch promptToShow {
+	case PromptWorkspacePath:
+		if msg.String() == "esc" || msg.String() == "q" || msg.String() == "enter" {
+			m.activePrompt = PromptNone
+		}
+		return m, nil
 	case PromptSettings:
 		return m.handleSettingsKeys(msg)
 	case PromptManagePackage:
@@ -437,6 +442,11 @@ func (m *TuiModel) triggerUninstall(pkg *bridge.CatalogEntry) (tea.Model, tea.Cm
 }
 
 func (m *TuiModel) triggerInstall(pkg *bridge.CatalogEntry, method string) (tea.Model, tea.Cmd) {
+	if err := validateNuxtSelections(map[string]bool{pkg.Name: true}, nil); err != nil {
+		m.statusMsg = err.Error()
+		m.addLog("✖ " + err.Error())
+		return m, nil
+	}
 	m.activeTask = TaskSetup
 	m.statusMsg = fmt.Sprintf("Installing %s via %s…", pkg.ShortName, method)
 	m.addLog(fmt.Sprintf("⚙ Selected Option: Install package %s via %s", pkg.Name, method))
@@ -568,7 +578,7 @@ func (m *TuiModel) triggerUpdate(pkg *bridge.CatalogEntry) (tea.Model, tea.Cmd) 
 			return
 		}
 		runtime.msgChan <- logLineMsg("ℹ Preparing workspace modules…")
-		err := runtime.runProcessAndStreamLogsSilent(workspaceRoot, "pnpm", []string{"run", "prepare:modules"})
+		err := runtime.runOptionalPrepareModules(workspaceRoot)
 		runtime.msgChan <- taskFinishedMsg{Success: err == nil, Err: err}
 	}()
 	return m, m.listenToChannel()

@@ -79,6 +79,25 @@ func (r *RuntimeState) runProcessAndStreamLogsSilent(root, command string, args 
 	return result.Err
 }
 
+// Generated workspaces need not provide the maintainer-only prepare script.
+func (r *RuntimeState) runOptionalPrepareModules(root string) error {
+	data, err := os.ReadFile(filepath.Join(root, "package.json"))
+	if err != nil {
+		return err
+	}
+	var pkg struct {
+		Scripts map[string]string `json:"scripts"`
+	}
+	if err := json.Unmarshal(data, &pkg); err != nil {
+		return err
+	}
+	if _, ok := pkg.Scripts["prepare:modules"]; !ok {
+		r.msgChan <- logLineMsg("ℹ No prepare:modules script; local packages may need their own preparation.")
+		return nil
+	}
+	return r.runProcessAndStreamLogsSilent(root, "pnpm", []string{"run", "prepare:modules"})
+}
+
 func (m *TuiModel) RunSetupTask(adds map[string]string) {
 	workspaceRoot := m.workspaceRoot
 	msgChan := m.runtime.msgChan
@@ -186,7 +205,7 @@ func (m *TuiModel) RunSetupTask(adds map[string]string) {
 		step++
 		msgChan <- setupProgressMsg{Step: step, Total: totalSteps, Label: "Rebuilding stubs (prepare:modules)…"}
 		msgChan <- logLineMsg("ℹ Rebuilding stubs…")
-		if err := runtime.runProcessAndStreamLogsSilent(workspaceRoot, "pnpm", []string{"run", "prepare:modules"}); err != nil {
+		if err := runtime.runOptionalPrepareModules(workspaceRoot); err != nil {
 			msgChan <- taskFinishedMsg{Success: false, Err: err}
 			return
 		}
@@ -245,7 +264,6 @@ func resolveOwner(pkgName string, entries []bridge.CatalogEntry) string {
 	return "owdproject"
 }
 
-
 func (m *TuiModel) RunUpdatePackageTask(pkgName string, shortName string, kind string, isLocalSource bool) {
 	workspaceRoot := m.workspaceRoot
 	runtime := m.runtime
@@ -298,7 +316,7 @@ func (m *TuiModel) RunUpdatePackageTask(pkgName string, shortName string, kind s
 		// Rebuild stubs
 		runtime.msgChan <- setupProgressMsg{Step: 3, Total: 3, Label: "Rebuilding stubs (prepare:modules)…"}
 		runtime.msgChan <- logLineMsg("ℹ Rebuilding stubs…")
-		if err := runtime.runProcessAndStreamLogsSilent(workspaceRoot, "pnpm", []string{"run", "prepare:modules"}); err != nil {
+		if err := runtime.runOptionalPrepareModules(workspaceRoot); err != nil {
 			runtime.msgChan <- taskFinishedMsg{Success: false, Err: err}
 			return
 		}
@@ -639,7 +657,7 @@ export default defineDesktopConfig({
 		step++
 		runtime.msgChan <- setupProgressMsg{Step: step, Total: totalSteps, Label: "Rebuilding stubs (prepare:modules)…"}
 		runtime.msgChan <- logLineMsg("ℹ Rebuilding stubs…")
-		if err := runtime.runProcessAndStreamLogsSilent(workspaceRoot, "pnpm", []string{"run", "prepare:modules"}); err != nil {
+		if err := runtime.runOptionalPrepareModules(workspaceRoot); err != nil {
 			runtime.msgChan <- logLineMsg(fmt.Sprintf("✗ Error running prepare:modules: %v", err))
 			runtime.msgChan <- taskFinishedMsg{Success: false, Err: err}
 			return
@@ -847,4 +865,3 @@ func ResolveAndCloneMissingDependencies(
 
 	return nil
 }
-

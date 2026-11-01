@@ -212,6 +212,9 @@ export async function runCreateCli(options = {}) {
     replacements['Template'] = pascalCase(name)
   }
 
+  // Each generated extension owns a distinct configuration namespace.
+  replacements["configKey: 'template'"] = `configKey: '${camelCase(name)}'`
+
   // Copy and replace placeholders
   try {
     copyAndScaffold(templateSrc, targetDir, replacements)

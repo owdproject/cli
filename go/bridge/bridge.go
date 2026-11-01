@@ -69,24 +69,24 @@ type SourcesMetadata struct {
 }
 
 type CatalogEntry struct {
-	ShortName      string           `json:"shortName"`
-	Description    string           `json:"description"`
-	Stars          int              `json:"stars"`
-	HtmlUrl        *string          `json:"htmlUrl"`
-	Org            string           `json:"org"`
-	Kind           string           `json:"kind"`
-	LocalPath      *string          `json:"localPath"`
-	Remote         *string          `json:"remote"`
-	Version        *string          `json:"version"`
-	Name           string           `json:"name"`
-	Trusted        bool             `json:"trusted"`
-	Installed      bool             `json:"installed"`
-	LocalSource    bool             `json:"localSource"`
-	InPackageJson  bool             `json:"inPackageJson"`
-	ActiveTheme    bool             `json:"activeTheme"`
-	SourcesMeta    *SourcesMetadata `json:"sourcesMeta"`
-	UpdatedAt      *string          `json:"updatedAt"`
-	PushedAt       *string          `json:"pushedAt"`
+	ShortName     string           `json:"shortName"`
+	Description   string           `json:"description"`
+	Stars         int              `json:"stars"`
+	HtmlUrl       *string          `json:"htmlUrl"`
+	Org           string           `json:"org"`
+	Kind          string           `json:"kind"`
+	LocalPath     *string          `json:"localPath"`
+	Remote        *string          `json:"remote"`
+	Version       *string          `json:"version"`
+	Name          string           `json:"name"`
+	Trusted       bool             `json:"trusted"`
+	Installed     bool             `json:"installed"`
+	LocalSource   bool             `json:"localSource"`
+	InPackageJson bool             `json:"inPackageJson"`
+	ActiveTheme   bool             `json:"activeTheme"`
+	SourcesMeta   *SourcesMetadata `json:"sourcesMeta"`
+	UpdatedAt     *string          `json:"updatedAt"`
+	PushedAt      *string          `json:"pushedAt"`
 }
 
 type CatalogResponse struct {
@@ -121,7 +121,26 @@ func FindWorkspaceRoot() (string, error) {
 }
 
 func getBridgePath(root string) string {
+	if executable, err := os.Executable(); err == nil {
+		if bridgePath := bridgePathFor(executable, root); bridgePath != "" {
+			return bridgePath
+		}
+	}
 	return filepath.Join(root, "packages", "cli", "bin", "bridge.js")
+}
+
+// bridgePathFor resolves bridge.js next to an installed CLI package. The
+// workspace-relative fallback keeps `go run` and monorepo development working.
+func bridgePathFor(executablePath, workspaceRoot string) string {
+	installedPath := filepath.Clean(filepath.Join(filepath.Dir(executablePath), "..", "bin", "bridge.js"))
+	if _, err := os.Stat(installedPath); err == nil {
+		return installedPath
+	}
+	workspacePath := filepath.Join(workspaceRoot, "packages", "cli", "bin", "bridge.js")
+	if _, err := os.Stat(workspacePath); err == nil {
+		return workspacePath
+	}
+	return ""
 }
 
 // ReadWorkspaceContext runs the node bridge with --read

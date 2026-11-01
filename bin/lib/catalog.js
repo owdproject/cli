@@ -255,15 +255,16 @@ export async function loadCatalog(workspaceRoot, settings, options = {}) {
   const previousNames = readPreviousCatalogNames(workspaceRoot)
   const newDays = settings.catalogNewDays ?? 14
 
-  const cached = options.force ? null : readCacheFile(workspaceRoot)
+  const cached = options.force ? null : readCache(workspaceRoot)
   let remote = cached?.entries ?? null
-  let cacheAge = cached?.fetchedAt ? formatCacheAge(cached.fetchedAt) : null
+  let cacheAge = cached?.cacheAge ?? null
 
   if (!remote) {
     remote = []
     const orgs = [...new Set([...(settings.githubOrgs ?? ['owdproject']), settings.githubUser].filter(Boolean))]
 
     const promises = []
+    let failed = 0
 
     for (const org of orgs) {
       for (const kind of Object.keys(KINDS)) {
@@ -273,7 +274,7 @@ export async function loadCatalog(workspaceRoot, settings, options = {}) {
               remote.push(...items)
             })
             .catch(() => {
-              /* offline — use local only */
+              failed++
             })
         )
       }
@@ -286,7 +287,7 @@ export async function loadCatalog(workspaceRoot, settings, options = {}) {
             remote.push(...items)
           })
           .catch(() => {
-            /* ignore */
+            failed++
           })
       )
     }
@@ -298,6 +299,7 @@ export async function loadCatalog(workspaceRoot, settings, options = {}) {
       writeCache(workspaceRoot, remote)
       cacheAge = formatCacheAge(Date.now())
     }
+    if (failed) cacheAge = remote.length ? 'partial' : 'offline'
   }
 
   const byName = new Map()

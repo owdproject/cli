@@ -35,6 +35,8 @@ func renderProgressBar(step, total, width int) string {
 func (m *TuiModel) renderModal(prompt PromptType) string {
 	pkg := m.promptPkg
 	switch prompt {
+	case PromptWorkspacePath:
+		return modalStyle.Width(72).Render(boldStyle.Render("Workspace path") + "\n\n" + m.workspaceRoot + "\n\n" + subtleStyle.Render("Esc to close"))
 	case PromptInstallMethod:
 		return m.renderInstallMethodModal(pkg)
 	case PromptUninstallConfirm:
@@ -91,7 +93,7 @@ func (m *TuiModel) renderUninstallConfirmModal(pkg *bridge.CatalogEntry) string 
 			if i == 1 {
 				bgStyle = modalConfirmActiveAccent
 			}
-			content.WriteString(bgStyle.Render(" "+opt+" "))
+			content.WriteString(bgStyle.Render(" " + opt + " "))
 		} else {
 			content.WriteString(modalOptionInactive.Render(" " + opt + " "))
 		}
@@ -112,7 +114,7 @@ func (m *TuiModel) renderForceReinstallConfirmModal(pkg *bridge.CatalogEntry) st
 			if i == 1 {
 				bgStyle = modalConfirmActiveAccent
 			}
-			content.WriteString(bgStyle.Render(" "+opt+" "))
+			content.WriteString(bgStyle.Render(" " + opt + " "))
 		} else {
 			content.WriteString(modalOptionInactive.Render(" " + opt + " "))
 		}

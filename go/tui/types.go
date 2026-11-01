@@ -113,6 +113,7 @@ const (
 	PromptSetupProgress
 	PromptResolveDependency
 	PromptWipeWorkspaceConfirm
+	PromptWorkspacePath
 )
 
 type ActiveTask int
@@ -156,21 +157,19 @@ const (
 // Model
 // ─────────────────────────────────────────────
 
-
-
 type TuiModel struct {
 	workspaceRoot string
 	ctx           *bridge.WorkspaceContext
 	catalog       *bridge.CatalogResponse
 	runtime       *RuntimeState
 
-	ExitCode     int
-	activeTab    int // 0: Internal, 1: Apps, 2: Modules, 3: Themes
-	err          error
-	loading      bool
-	statusMsg    string
-	logLines     []string
-	memHistory   []int
+	ExitCode   int
+	activeTab  int // 0: Internal, 1: Apps, 2: Modules, 3: Themes
+	err        error
+	loading    bool
+	statusMsg  string
+	logLines   []string
+	memHistory []int
 
 	// Selection
 	selectedIndex int
@@ -201,8 +200,8 @@ type TuiModel struct {
 	checkingUpdates bool
 
 	// Animation
-	blink      bool
-	tickCount  int
+	blink     bool
+	tickCount int
 
 	// Layout
 	termWidth  int
@@ -226,5 +225,4 @@ type TuiModel struct {
 	setupLabel            string
 	workspaceBranch       string
 	workspaceChanges      string
-	clientStars           int
 }

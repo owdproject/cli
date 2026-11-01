@@ -17,7 +17,7 @@ import {
   resolveDesktopConfigPath,
   desktopConfigWritePath,
 } from './desktopConfig.js'
-import { addToDesktopConfig } from './config.js'
+import { addToDesktopConfig, readDesktopConfig } from './config.js'
 
 const require = createRequire(import.meta.url)
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -453,22 +453,14 @@ export async function runWorkspaceInstall({
   printNextSteps({ targetDir, dryRun: false })
 }
 
-export function runNpmInstall(kind, pkgName, workspaceRoot, stdio = 'inherit') {
-  return new Promise((resolve, reject) => {
-    const child = spawn('node', ['scripts/install-app.mjs', pkgName, `--kind=${kind}`], {
-      stdio,
-      shell: true,
-      cwd: workspaceRoot,
-    })
-    child.on('error', reject)
-    child.on('exit', (code) => {
-      if (code === 0) {
-        resolve()
-      } else {
-        reject(new Error(`Installation failed with exit code ${code}`))
-      }
-    })
-  })
+export async function runNpmInstall(kind, pkgName, workspaceRoot, stdio = 'inherit') {
+  const desktopPath = join(workspaceRoot, 'desktop')
+  const resolved = resolveDesktopConfigPath(desktopPath)
+  const configPath = resolved?.path ?? desktopConfigWritePath(desktopPath)
+  // Detect an invalid host config before changing its package manifest.
+  readDesktopConfig(configPath, workspaceRoot)
+  await spawnAsync('pnpm', ['add', pkgName], { cwd: desktopPath, stdio })
+  addToDesktopConfig(configPath, workspaceRoot, KINDS[kind].configKey, pkgName)
 }
 
 /** Preview label for TUI list rows */

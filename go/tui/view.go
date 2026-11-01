@@ -27,8 +27,8 @@ func (m *TuiModel) View() string {
 	showRightPanel := w >= 120
 
 	// Heights
-	topH := 9    // top panels row (with borders = 9 rows)
-	barH := 4    // status bar: 1 blank line + line1 + line2 = 4 rows
+	topH := 10 // top panels row, including workspace path
+	barH := 4  // status bar: 1 blank line + line1 + line2 = 4 rows
 	// catalog gets the remaining height
 	catalogH := h - topH - barH
 	if catalogH < 4 {
@@ -40,19 +40,19 @@ func (m *TuiModel) View() string {
 	if showRightPanel {
 		// 40% | 28% | 32%  — roughly matching original blessed layout
 		rightW = w * 32 / 100
-		leftW  = w * 40 / 100
-		midW   = w - leftW - rightW
+		leftW = w * 40 / 100
+		midW = w - leftW - rightW
 	} else {
 		leftW = w * 58 / 100
-		midW  = w - leftW
+		midW = w - leftW
 		rightW = 0
 	}
 
 	// ── Render panel contents ─────────────────────────────
 	leftContent := m.renderClientPanel(leftW-4, topH-2)
-	midContent  := m.renderMetricsPanel(midW-4, topH-2)
+	midContent := m.renderMetricsPanel(midW-4, topH-2)
 
-	desktopTitle := accentStyle.Render("Desktop") + " " +
+	desktopTitle := accentStyle.Render("Open Web Desktop") + " " +
 		desktopSubTitleStyle.Render("control panel")
 
 	var topRow, mainContent, catalogPanel string
@@ -146,6 +146,11 @@ func (m *TuiModel) View() string {
 
 func (m *TuiModel) renderClientPanel(w, h int) string {
 	var lines []string
+	port := 3000
+	if m.ctx != nil && m.ctx.Settings.DevPort > 0 {
+		port = m.ctx.Settings.DevPort
+	}
+	serverURL := fmt.Sprintf("http://localhost:%d", port)
 
 	// Server status line
 	var statusLine string
@@ -153,34 +158,31 @@ func (m *TuiModel) renderClientPanel(w, h int) string {
 		spinnerFrames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 		frame := spinnerFrames[m.tickCount%len(spinnerFrames)]
 		dot := warnBoldStyle.Render(frame)
-		statusLine = dot + " " + boldStyle.Render("STOPPING") + "  " + mutedStyle.Render("http://localhost:3000")
+		statusLine = dot + " " + boldStyle.Render("STOPPING") + "  " + mutedStyle.Render(serverURL)
 	} else if m.activeTask == TaskServe && strings.Contains(strings.ToLower(m.statusMsg), "starting") {
 		spinnerFrames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 		frame := spinnerFrames[m.tickCount%len(spinnerFrames)]
 		dot := cyanBoldStyle.Render(frame)
-		statusLine = dot + " " + boldStyle.Render("STARTING") + "  " + mutedStyle.Render("http://localhost:3000")
+		statusLine = dot + " " + boldStyle.Render("STARTING") + "  " + mutedStyle.Render(serverURL)
 	} else if m.serverRunning {
 		dot := accentStyle.Render("●")
 		if m.blink {
 			dot = blinkGreenStyle.Render("●")
 		}
-		url := cyanRegularStyle.Render("http://localhost:3000")
+		url := cyanRegularStyle.Render(serverURL)
 		statusLine = dot + " " + boldStyle.Render("RUNNING") + "   " + url
-		if m.ctx != nil {
-			_ = m.ctx
-		}
 	} else if m.activeTask != TaskNone {
 		spinnerFrames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 		frame := spinnerFrames[m.tickCount%len(spinnerFrames)]
 		dot := warnBoldStyle.Render(frame)
-		statusLine = dot + " " + boldStyle.Render("STARTING") + "  " + mutedStyle.Render("http://localhost:3000")
+		statusLine = dot + " " + boldStyle.Render("WORKING") + "  " + mutedStyle.Render(serverURL)
 	} else {
 		dot := errStyle.Render("○")
-		statusLine = dot + " " + boldStyle.Render("STOPPED") + "   " + mutedStyle.Render("http://localhost:3000")
+		statusLine = dot + " " + boldStyle.Render("STOPPED") + "   " + mutedStyle.Render(serverURL)
 	}
 	lines = append(lines, "  "+statusLine)
-	lines = append(lines, "") // Space out server status line
-	lines = append(lines, mutedStyle.Render("  System     ")+boldStyle.Render("ready"))
+	lines = append(lines, mutedStyle.Render("  Path       ")+boldStyle.Render(truncate(m.workspaceRoot, w-19))+mutedStyle.Render(" [p]"))
+	lines = append(lines, mutedStyle.Render("  Files      ")+boldStyle.Render(m.fileServiceStatus()))
 
 	// Theme
 	theme := "—"
@@ -206,7 +208,7 @@ func (m *TuiModel) renderClientPanel(w, h int) string {
 		if m.ctx.Paths.IsPlayground {
 			source = "playground"
 		} else {
-			source = "monorepo"
+			source = "workspace"
 		}
 	}
 	lines = append(lines, mutedStyle.Render("  Source     ")+boldStyle.Render(source))
@@ -218,6 +220,51 @@ func (m *TuiModel) renderClientPanel(w, h int) string {
 	lines = append(lines, mutedStyle.Render("  Changes    ")+m.workspaceChanges)
 
 	return strings.Join(lines, "\n")
+}
+
+const nuxtFileService = "@owdproject/nuxt-module-fs"
+
+// The config tells us whether the module is selected, not whether it started.
+func (m *TuiModel) fileServiceStatus() string {
+	if m.ctx == nil {
+		return "loading"
+	}
+	if queued, ok := m.pendingPackages[nuxtFileService]; ok {
+		if queued {
+			return "add queued"
+		}
+		return "removal queued"
+	}
+	if containsStr(m.ctx.Config.Modules, nuxtFileService) {
+		return "configured"
+	}
+	return "not configured · f browse"
+}
+
+// Quests describe the next action, not verified runtime readiness.
+func (m *TuiModel) nextQuest() string {
+	if m.ctx == nil {
+		return "Loading your desktop configuration…"
+	}
+	if m.hasPendingChanges() {
+		return "Quest · Apply your selections [s]"
+	}
+	if strings.HasPrefix(m.statusMsg, "File service:") {
+		return m.statusMsg
+	}
+	if m.ctx.Config.Theme == nil || *m.ctx.Config.Theme == "" {
+		return "Quest 1/3 · Choose a theme [3]"
+	}
+	if len(m.ctx.Config.Apps) == 0 {
+		return "Quest 2/3 · Choose an app [1]"
+	}
+	if !m.serverRunning {
+		return "Quest 3/3 · Start your desktop [d]"
+	}
+	if !containsStr(m.ctx.Config.Modules, nuxtFileService) {
+		return "Optional quest · Explore the file service [f]"
+	}
+	return "Desktop running · Explore apps [1] or modules [2]"
 }
 
 // ─────────────────────────────────────────────
@@ -253,33 +300,8 @@ func (m *TuiModel) renderMetricsPanel(w, h int) string {
 	vers := getVersions(nuxtRoot, m.workspaceRoot)
 	lines = append(lines, kv("Nuxt", vers.Nuxt)+mutedStyle.Render(" · ")+kv("Core", vers.Owd))
 
-	// Tips rotating every 5 seconds (approx. 33 ticks of 150ms)
-	var tips []string
-	if m.clientStars >= 0 {
-		tips = []string{
-			fmt.Sprintf("★ owdproject/client: %d stars", m.clientStars),
-			"Tip: Use arrow keys to navigate",
-			"Tip: Space to toggle a package",
-			"Tip: 'r' to refresh the catalog",
-			"Tip: 's' to start/stop server",
-			"Tip: 'c' to manage a package",
-			"Tip: 'n' to scaffold new package",
-		}
-	} else {
-		tips = []string{
-			"Tip: Use arrow keys to navigate",
-			"Tip: Space to toggle a package",
-			"Tip: 'r' to refresh the catalog",
-			"Tip: 's' to start/stop server",
-			"Tip: 'c' to manage a package",
-			"Tip: 'n' to scaffold new package",
-		}
-	}
-	tipIdx := (m.tickCount / 33) % len(tips)
-	tipText := tips[tipIdx]
-
 	lines = append(lines, "")
-	lines = append(lines, dimStyle.Render(truncate(tipText, w-2)))
+	lines = append(lines, cyanRegularStyle.Render(truncate(m.nextQuest(), w-2)))
 
 	for i, line := range lines {
 		lines[i] = "  " + line
@@ -323,6 +345,14 @@ func (m *TuiModel) renderCatalogPanel(w, h int, _ bool) string {
 	}
 	lines = append(lines, tabLine.String())
 	lines = append(lines, "")
+	if m.catalog != nil && (m.catalog.CacheAge == "offline" || m.catalog.CacheAge == "partial") {
+		lines = append(lines, "  "+warnStyle.Render("Catalog unavailable or incomplete · r to retry"))
+	}
+	if m.activeTab == 2 && strings.HasPrefix(m.statusMsg, "File service: not in catalog") {
+		lines = append(lines, "  "+warnStyle.Render("File service is not listed in the catalog."))
+		lines = append(lines, "  "+boldStyle.Render("Run: desktop add nuxt-module-fs"))
+		lines = append(lines, "")
+	}
 
 	items := m.getActiveItems()
 
@@ -332,7 +362,7 @@ func (m *TuiModel) renderCatalogPanel(w, h int, _ bool) string {
 	}
 
 	// Calculate pagination heights
-	visibleRows := h - 6 // height minus tabs, spaces, detail pane separator and details row
+	visibleRows := h - len(lines) - 4 // tabs, optional guidance, separator and detail row
 	if visibleRows < 1 {
 		visibleRows = 1
 	}
@@ -757,6 +787,8 @@ func (m *TuiModel) renderStatusBar(w int) string {
 	shortcutParts = append(shortcutParts,
 		barKeyStyle.Render("↑↓")+barTextStyle.Render(" move"),
 		barKeyStyle.Render("Space")+barTextStyle.Render(" toggle"),
+		barKeyStyle.Render("f")+barTextStyle.Render(" files"),
+		barKeyStyle.Render("p")+barTextStyle.Render(" path"),
 		barKeyStyle.Render("c")+barTextStyle.Render(" manage"),
 	)
 
@@ -791,7 +823,7 @@ func (m *TuiModel) getActiveItems() []bridge.CatalogEntry {
 	for _, e := range m.catalog.Entries {
 		switch m.activeTab {
 		case 0: // Internal
-			if e.Kind == "module" && !strings.HasPrefix(e.ShortName, "module-") {
+			if e.Kind == "module" && !strings.HasPrefix(baseKindName(e.ShortName), "module-") {
 				res = append(res, e)
 			}
 		case 1: // Apps
@@ -799,7 +831,7 @@ func (m *TuiModel) getActiveItems() []bridge.CatalogEntry {
 				res = append(res, e)
 			}
 		case 2: // Modules
-			if e.Kind == "module" && strings.HasPrefix(e.ShortName, "module-") {
+			if e.Kind == "module" && strings.HasPrefix(baseKindName(e.ShortName), "module-") {
 				res = append(res, e)
 			}
 		case 3: // Themes

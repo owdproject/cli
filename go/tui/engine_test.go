@@ -38,3 +38,27 @@ func TestBuildConfigFromPendingRemovals(t *testing.T) {
 		t.Fatalf("app-todo should be removed from config, got %v", config.Apps)
 	}
 }
+
+func TestNuxtSelectionsRejectOtherFrameworksBeforeSaving(t *testing.T) {
+	if err := validateNuxtSelections(map[string]bool{"@owdproject/react-app-example": true}, nil); err == nil {
+		t.Fatal("a React app must not be added to a Nuxt desktop")
+	}
+	if err := validateNuxtSelections(map[string]bool{"@owdproject/react-app-example": false}, nil); err != nil {
+		t.Fatalf("an existing incompatible app must remain removable: %v", err)
+	}
+	theme := "@owdproject/react-theme-win95"
+	if err := validateNuxtSelections(nil, &theme); err == nil {
+		t.Fatal("a React theme must not be selected for a Nuxt desktop")
+	}
+	if err := validateNuxtSelections(map[string]bool{"@owdproject/nuxt-app-todo": true}, nil); err != nil {
+		t.Fatalf("a Nuxt app should remain selectable: %v", err)
+	}
+}
+
+func TestDirectInstallRejectsOtherFrameworkBeforeWriting(t *testing.T) {
+	model := NewModel(t.TempDir())
+	_, command := model.triggerInstall(&bridge.CatalogEntry{Name: "@owdproject/react-app-example", Kind: "app"}, "npm")
+	if model.activeTask != TaskNone || command != nil {
+		t.Fatal("incompatible install must stop before starting a task or writing configuration")
+	}
+}

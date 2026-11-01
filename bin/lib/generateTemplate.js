@@ -247,7 +247,7 @@ function readProjectJson(srcPath) {
  * @param {string} outputRoot
  * @param {{ versions: Record<string, string> }} ctx
  */
-function writeGeneratedFiles(workspaceRoot, outputRoot, ctx) {
+export function writeGeneratedFiles(workspaceRoot, outputRoot, ctx) {
   const { versions } = ctx
   const desktopSrc = join(workspaceRoot, 'desktop')
   const desktopOut = join(outputRoot, 'desktop')

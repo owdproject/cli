@@ -1,32 +1,51 @@
-import { execSync, spawnSync } from 'node:child_process'
+import { execSync, spawn, spawnSync } from 'node:child_process'
 import {
   cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { basename, dirname, join, resolve } from 'node:path'
+import { basename, dirname, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
-const CLIENT_TEMPLATE = resolve(__dirname, '../../../../template')
-const DEFAULT_CLIENT_REPO = 'https://github.com/owdproject/nuxt-desktop.git'
+const NUXT_TEMPLATE = resolve(__dirname, '../../../../template')
+export const STARTER_REPOS = {
+  nuxt: 'https://github.com/owdproject/nuxt-desktop.git',
+  react: 'https://github.com/owdproject/react-desktop.git',
+}
+export const PLANNED_STARTERS = ['vue', 'svelte', 'angular', 'astro']
+
+export function validateFramework(framework) {
+  if (PLANNED_STARTERS.includes(framework)) {
+    throw new Error(`The ${framework} desktop starter is planned but is not available yet.`)
+  }
+  if (!Object.hasOwn(STARTER_REPOS, framework)) {
+    throw new Error(`Unknown starter "${framework}". Choose nuxt or react.`)
+  }
+  return framework
+}
 
 /**
  * @param {string} [startDir]
  */
-export function resolveLocalTemplatePath(startDir = process.cwd()) {
-  const fromEnv = process.env.OWD_TEMPLATE_PATH?.trim()
+export function resolveLocalTemplatePath(startDir = process.cwd(), framework = 'nuxt') {
+  validateFramework(framework)
+  const fromEnv = (framework === 'react' ? process.env.OWD_REACT_TEMPLATE_PATH : process.env.OWD_TEMPLATE_PATH)?.trim()
   if (fromEnv && existsSync(join(fromEnv, 'package.json'))) {
     return resolve(fromEnv)
   }
 
-  if (existsSync(join(CLIENT_TEMPLATE, 'package.json'))) {
-    return CLIENT_TEMPLATE
+  // The template beside this CLI belongs to the Nuxt host only.
+  if (framework === 'react') return null
+  if (existsSync(join(NUXT_TEMPLATE, 'package.json'))) {
+    return NUXT_TEMPLATE
   }
 
   let dir = startDir
@@ -51,45 +70,59 @@ export function resolveLocalTemplatePath(startDir = process.cwd()) {
  * @param {string} targetDir
  */
 export function copyTemplate(templatePath, targetDir) {
-  cpSync(templatePath, targetDir, { recursive: true, filter: (src) => !src.includes('node_modules') })
+  const excluded = new Set(['.git', 'node_modules', '.nuxt', '.output'])
+  cpSync(templatePath, targetDir, {
+    recursive: true,
+    filter: (src) => !relative(templatePath, src).split(sep).some((part) => excluded.has(part)),
+  })
+}
+
+function cloneGit(repo, targetDir) {
+  return new Promise((resolve, reject) => {
+    const child = spawn('git', ['clone', '--depth', '1', repo, targetDir], { stdio: 'inherit' })
+    child.once('error', reject)
+    child.once('close', (code) => {
+      if (code === 0) resolve()
+      else reject(new Error(`Could not clone starter repository ${repo} (git exit ${code}).`))
+    })
+  })
 }
 
 /**
  * @param {string} targetDir
- * @param {{ repo?: string, templatePath?: string | null, cwd?: string }} [options]
+ * @param {{ repo?: string, templatePath?: string | null, cwd?: string, framework?: 'nuxt' | 'react', setupType?: 'template' | 'clone' }} [options]
  */
 export async function cloneTemplate(targetDir, options = {}) {
   const setupType = options.setupType ?? 'template'
+  const framework = validateFramework(options.framework ?? 'nuxt')
+  const repo = options.repo || STARTER_REPOS[framework]
 
   if (setupType === 'clone') {
-    const repo = options.repo ?? DEFAULT_CLIENT_REPO
     console.log()
-    execSync(`git clone --depth 1 ${JSON.stringify(repo)} ${JSON.stringify(targetDir)}`, {
-      stdio: 'inherit',
-    })
+    await cloneGit(repo, targetDir)
     return { source: 'git', path: repo }
   }
 
-  const localTemplate = options.templatePath ?? resolveLocalTemplatePath(options.cwd)
+  const localTemplate = options.templatePath ?? (options.repo ? null : resolveLocalTemplatePath(options.cwd, framework))
 
   if (localTemplate) {
     copyTemplate(localTemplate, targetDir)
     return { source: 'local', path: localTemplate }
   }
 
-  const repo = options.repo ?? DEFAULT_CLIENT_REPO
   const tempParent = mkdtempSync(join(tmpdir(), 'owd-scaffold-'))
-  const tempClone = join(tempParent, 'client')
+  const tempClone = join(tempParent, `${framework}-desktop`)
 
   try {
     console.log()
-    execSync(`git clone --depth 1 ${JSON.stringify(repo)} ${JSON.stringify(tempClone)}`, {
-      stdio: 'inherit',
-    })
+    await cloneGit(repo, tempClone)
 
-    const templatePath = join(tempClone, 'template')
-    if (!existsSync(templatePath)) {
-      throw new Error('Template directory does not exist in the cloned repository.')
+    const candidate = join(tempClone, 'template')
+    const templatePath = existsSync(join(candidate, 'package.json'))
+      ? candidate
+      : framework === 'react' && existsSync(join(tempClone, 'package.json')) ? tempClone : null
+    if (!templatePath) {
+      throw new Error(`The ${framework} desktop repository does not contain a template/ starter.`)
     }
 
     copyTemplate(templatePath, targetDir)
@@ -141,11 +174,12 @@ export function launchControlPanel(targetDir, commandName = 'desktop') {
 }
 
 /**
- * @param {{ dir?: string, cwd?: string, commandName?: string, skipInstall?: boolean, skipUi?: boolean, repo?: string, setupType?: 'template' | 'clone' }} [options]
+ * @param {{ dir?: string, cwd?: string, commandName?: string, skipInstall?: boolean, skipUi?: boolean, repo?: string, templatePath?: string | null, framework?: 'nuxt' | 'react', setupType?: 'template' | 'clone' }} [options]
  */
 export async function scaffoldProject(options = {}) {
   const cwd = options.cwd ?? process.cwd()
-  const dir = (options.dir ?? 'client').trim()
+  const framework = validateFramework(options.framework ?? 'nuxt')
+  const dir = (options.dir ?? `owd-${framework}-desktop`).trim()
   const commandName = options.commandName ?? 'desktop'
   const setupType = options.setupType ?? 'template'
 
@@ -156,21 +190,30 @@ export async function scaffoldProject(options = {}) {
   const targetDir = resolve(cwd, dir)
 
   if (existsSync(targetDir)) {
-    if (existsSync(join(targetDir, 'package.json'))) {
+    const isEmptyCurrentDir = targetDir === resolve(cwd) && statSync(targetDir).isDirectory() && readdirSync(targetDir).length === 0
+    if (!isEmptyCurrentDir && existsSync(join(targetDir, 'package.json'))) {
       throw new Error(`Directory "${dir}" already exists and contains a package.json.`)
     }
-    throw new Error(`Directory "${dir}" already exists.`)
-  }
-
-  if (setupType !== 'clone') {
-    mkdirSync(targetDir, { recursive: true })
+    if (!isEmptyCurrentDir) throw new Error(`Directory "${dir}" already exists and is not empty.`)
   }
 
   const cloneResult = await cloneTemplate(targetDir, {
     repo: options.repo,
+    templatePath: options.templatePath,
     cwd,
     setupType,
+    framework,
   })
+
+  const profileDir = join(targetDir, '.owd')
+  const profilePath = join(profileDir, 'project.json')
+  if (existsSync(profilePath)) {
+    const profile = JSON.parse(readFileSync(profilePath, 'utf8'))
+    if (profile.framework !== framework) throw new Error(`Starter profile in ${profilePath} does not match ${framework}.`)
+  } else {
+    mkdirSync(profileDir, { recursive: true })
+    writeFileSync(profilePath, JSON.stringify({ schemaVersion: 1, framework }, null, 2) + '\n')
+  }
 
   if (cloneResult.source === 'local') {
     console.log(`Using local template: ${cloneResult.path}\n`)
@@ -178,20 +221,36 @@ export async function scaffoldProject(options = {}) {
 
   if (!options.skipInstall) {
     console.log('Installing dependencies (pnpm install)…\n')
-    runPostScaffold(targetDir)
+    try {
+      runPostScaffold(targetDir)
+    } catch (error) {
+      throw new Error(`Dependency installation failed in ${targetDir}. The project files were kept. Check the error above; if pnpm requests build approval, run \`pnpm approve-builds\`, then \`pnpm install\` again from that directory.`, { cause: error })
+    }
   }
 
-  console.log('\n✓ Project ready\n')
+  console.log(options.skipInstall
+    ? '\n✓ Starter created; dependencies have not been installed\n'
+    : '\n✓ Project ready\n')
 
-  if (!options.skipUi) {
+  if (!options.skipUi && options.skipInstall) {
+    console.log(framework === 'react'
+      ? 'Install dependencies before starting the dev server.'
+      : 'Install dependencies before opening the control panel.')
+  } else if (!options.skipUi && framework === 'nuxt') {
     launchControlPanel(targetDir, commandName)
+  } else if (!options.skipUi && framework === 'react') {
+    console.log('The React control panel is not implemented yet; use the project scripts.')
   }
 
-  console.log(`  cd ${dir}\n`)
-  console.log('  pnpm install')
-  console.log('  pnpm desktop\n')
+  // Framework-aware next steps: Nuxt hosts run the control panel, React hosts
+  // run their own Vite scripts. Skip `cd` when the starter is created in place.
+  const runCommand = framework === 'react' ? 'pnpm dev' : 'pnpm desktop'
+  const inPlace = resolve(cwd) === targetDir
+  if (!inPlace) console.log(`  cd ${dir}`)
+  if (options.skipInstall) console.log('  pnpm install')
+  console.log(`  ${runCommand}\n`)
 
-  return { targetDir, dir }
+  return { targetDir, dir, framework }
 }
 
 /** Copy scaffold.js into create-owd for npm publish (run from repo root). */

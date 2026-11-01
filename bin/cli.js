@@ -1,8 +1,8 @@
-import { spawn, execSync } from 'node:child_process'
+import { spawn, spawnSync, execSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { runDevForeground } from './lib/status.js'
-import { existsSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync, readFileSync, writeSync } from 'node:fs'
+import { join, resolve } from 'node:path'
 import getopts from 'getopts'
 import {
   resolveSource,
@@ -11,7 +11,7 @@ import {
   runWorkspaceInstall,
   runNpmInstall,
 } from './lib/install.js'
-import { findWorkspaceRoot, inferKind } from './lib/workspace.js'
+import { findWorkspaceRoot, inferKind, withoutFrameworkPrefix, FRAMEWORKS } from './lib/workspace.js'
 import { resolveDevTarget } from './lib/playgroundContext.js'
 import { scaffoldProject } from './lib/scaffold.js'
 
@@ -56,21 +56,17 @@ USAGE
   ${name}                 Open the control panel (interactive TUI)
   ${name} dev [--playground]  Start dev server (auto-detects module playground)
 
-CONTROL PANEL (TUI)
-  m                       Open command menu (all actions)
-  s                       Start the Nuxt dev server
-  x                       Stop the Nuxt dev server
-  R                       Reboot the Nuxt dev server (stop + start)
-  w                       Save catalog/theme changes to desktop.config.ts
+CONTROL PANEL (Bubble Tea)
+  d / x                   Start / stop the dev server
+  s                       Apply queued package and theme changes
   1 / 2 / 3               Apps / Modules / Themes catalog tabs
-  o / O                   Cycle sort (o) or open sort picker (O)
-  i                       Open in-app docs (when module-docs is installed)
-  g                       Settings (GitHub user, SSH, trusted orgs)
-  r                       Refresh package list from GitHub (detects new modules)
-  b                       Run pnpm run generate
-  n                       Create a new app or module (interactive wizard)
-  q / Esc                 Quit
-  ${name} init [dir]      Create a new OWD project (then opens the control panel)
+  ↑ / ↓ / Space           Navigate and select packages
+  f                       Find the optional Nuxt file service
+  c / u                   Manage / update the selected package
+  g / r                   Settings / refresh catalog
+  n                       Create a new app or module
+  q                       Quit
+  ${name} init [dir] [--framework nuxt|react]  Create a desktop project
   ${name} create                  Create a new app or module (interactive wizard)
   ${name} create <kind> <name>    Scaffold a new app or module (e.g. desktop create app todo → @owdproject/nuxt-app-todo)
   ${name} add <package> [options]
@@ -113,6 +109,10 @@ KINDS (optional — inferred from the package name)
 
 OPTIONS
   --playground      Start the module playground dev server (when cwd is inside an @owdproject/* package with playground/)
+  --framework       Starter framework for init (nuxt or react; Nuxt is the non-interactive default)
+  --starter-repo    Git repository containing the selected starter's template/ (init)
+  --skip-install    Create the starter without installing dependencies (init)
+  --skip-ui         Do not launch the control panel after setup (init)
   --from <source>   Git source (user, user/repo, or URL)
   --branch <name>   Git branch to clone
   --npm             Install from npm (default when --from is omitted)
@@ -135,6 +135,38 @@ LEGACY (still supported)
 `
 }
 
+async function chooseStarter(target) {
+  if (!process.stdin.isTTY || !process.stdout.isTTY || process.env.CI) return 'nuxt'
+
+  const cliDir = join(fileURLToPath(import.meta.url), '..')
+  const goDir = join(cliDir, '../go')
+  const binaryPath = join(goDir, 'desktop-go')
+  const build = spawnSync('go', ['build', '-buildvcs=false', '-o', binaryPath, '.'], { cwd: goDir, stdio: 'inherit' })
+  if (build.status === 0) {
+    const selected = spawnSync(binaryPath, ['--choose-starter', target], { stdio: 'inherit' })
+    if (selected.status === 20) return 'nuxt'
+    if (selected.status === 21) return 'react'
+    if (selected.status === 22) return null
+  }
+
+  console.warn('The Bubble Tea starter picker is unavailable; using a text prompt.')
+  console.log(`Workspace path: ${target}`)
+  console.log('Vue, Svelte, Angular and Astro host starters are planned.')
+  const readline = await import('node:readline/promises')
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
+  try {
+    for (;;) {
+      const value = (await rl.question('Choose a starter (nuxt / react) [nuxt]: ')).trim().toLowerCase()
+      if (!value || value === 'nuxt') return 'nuxt'
+      if (value === 'react') return 'react'
+      if (value === 'q' || value === 'cancel') return null
+      console.log('Choose nuxt or react, or type q to cancel.')
+    }
+  } finally {
+    rl.close()
+  }
+}
+
 async function openControlPanel(name) {
   const cliDir = join(fileURLToPath(import.meta.url), '..')
   const goDir = join(cliDir, '../go')
@@ -145,7 +177,7 @@ async function openControlPanel(name) {
   if (!existsSync(binaryPath)) {
     console.log('Go Control Panel binary not found. Compiling...')
     try {
-      execSync('go build -o desktop-go .', { cwd: goDir, stdio: 'inherit' })
+      execSync('go build -buildvcs=false -o desktop-go .', { cwd: goDir, stdio: 'inherit' })
       console.log('Go Control Panel compiled successfully!')
     } catch (err) {
       console.warn('Failed to compile Go Control Panel, falling back to legacy CP:', err.message)
@@ -199,9 +231,9 @@ async function openControlPanel(name) {
 }
 
 function fail(message, hint) {
-  console.error(`\n✗ ${message}`)
-  if (hint) console.error(`  ${hint}`)
-  console.error(`\nRun \`${commandName} --help\` for usage.\n`)
+  const hintLine = hint ? `  ${hint}\n` : ''
+  // stderr may be a pipe; flush diagnostics synchronously before exiting.
+  writeSync(process.stderr.fd, `\n✗ ${message}\n${hintLine}\nRun \`${commandName} --help\` for usage.\n\n`)
   process.exit(1)
 }
 
@@ -215,7 +247,8 @@ function warn(message) {
  */
 function normalizePackage(input, explicitKind) {
   let raw = input.trim()
-  if (raw.startsWith(SCOPE)) raw = raw.slice(SCOPE.length)
+  const fullyScoped = raw.startsWith(SCOPE)
+  if (fullyScoped) raw = raw.slice(SCOPE.length)
 
   if (!raw) {
     fail('Package name is required.', `Example: ${commandName} add app-todo`)
@@ -231,9 +264,16 @@ function normalizePackage(input, explicitKind) {
     }
     const expected = prefixes[explicitKind]
     const list = Array.isArray(expected) ? expected : [expected]
-    if (!list.some((p) => raw.startsWith(p))) {
+    if (!list.some((p) => withoutFrameworkPrefix(raw).startsWith(p))) {
       raw = `${list[0]}${raw}`
     }
+  }
+
+  // Unscoped shorthand targets the current Nuxt host. A fully scoped name is
+  // kept exact, including legacy package names explicitly requested by users.
+  const firstSegment = raw.split('-')[0]
+  if (!fullyScoped && !FRAMEWORKS.includes(firstSegment) && /^(app|module|theme|kit)-/.test(raw)) {
+    raw = `nuxt-${raw}`
   }
 
   return { pkgName: `${SCOPE}${raw}`, shortName: raw, kind }
@@ -299,8 +339,8 @@ export async function runCli(name, argv, options = {}) {
 
   const parsed = getopts(argv, {
     alias: { h: 'help', b: 'branch' },
-    boolean: ['help', 'npm', 'dry-run', 'dev', 'workspace', 'playground', 'json', 'strict', 'smoke', 'check'],
-    string: ['from', 'branch', 'fork', 'repo', 'protocol'],
+    boolean: ['help', 'npm', 'dry-run', 'dev', 'workspace', 'playground', 'json', 'strict', 'smoke', 'check', 'skip-install', 'skip-ui'],
+    string: ['from', 'branch', 'fork', 'repo', 'protocol', 'framework', 'starter-repo'],
   })
 
   const { _, help, npm: npmFlag } = parsed
@@ -311,13 +351,12 @@ export async function runCli(name, argv, options = {}) {
 
   if (help || _[0] === 'help') {
     console.log(buildHelp(name))
-    process.exit(0)
+    return
   }
 
   const cmd = _[0]
 
   if (cmd === 'init') {
-    const projectDir = (_[1] || 'owd-client').trim()
     const cwd = process.cwd()
 
     if (findWorkspaceRoot(cwd)) {
@@ -328,7 +367,20 @@ export async function runCli(name, argv, options = {}) {
     }
 
     try {
-      await scaffoldProject({ dir: projectDir, cwd, commandName: name })
+      const framework = parsed.framework || await chooseStarter(resolve(cwd, _[1] ? String(_[1]).trim() : 'owd-nuxt-desktop'))
+      if (!framework) {
+        console.log('Starter creation cancelled.')
+        return
+      }
+      await scaffoldProject({
+        dir: _[1] ? String(_[1]).trim() : undefined,
+        cwd,
+        commandName: name,
+        framework,
+        repo: parsed['starter-repo'] || undefined,
+        skipInstall: parsed['skip-install'],
+        skipUi: parsed['skip-ui'],
+      })
     } catch (error) {
       fail(error.message ?? String(error))
     }
@@ -336,6 +388,22 @@ export async function runCli(name, argv, options = {}) {
   }
 
   const workspaceRoot = findWorkspaceRoot()
+
+  if (workspaceRoot) {
+    const profilePath = join(workspaceRoot, '.owd', 'project.json')
+    if (existsSync(profilePath)) {
+      let profile
+      try {
+        profile = JSON.parse(readFileSync(profilePath, 'utf8'))
+      } catch (error) {
+        fail(`Cannot read project profile: ${error.message}`)
+      }
+      if (profile.framework !== 'nuxt') {
+        fail(`The control panel does not yet support the ${profile.framework ?? 'unknown'} host.`,
+          'Use this project’s own scripts until its adapter is supported.')
+      }
+    }
+  }
 
   if (cmd === 'dev') {
     if (!workspaceRoot) {
@@ -372,7 +440,8 @@ export async function runCli(name, argv, options = {}) {
       console.log(formatValidationReport(result, { json }))
       if (!json) console.log('')
     }
-    process.exit(exitCode)
+    process.exitCode = exitCode
+    return
   }
 
   if (cmd === 'template') {
@@ -407,10 +476,16 @@ export async function runCli(name, argv, options = {}) {
 
   if (!cmd) {
     if (!workspaceRoot) {
-      fail(
-        'Not inside an OWD workspace.',
-        'Run from the client repo, or try: desktop · desktop add <package>',
-      )
+      if (!process.stdin.isTTY || !process.stdout.isTTY || process.env.CI) {
+        fail('Not inside an OWD workspace.', `Run ${name} init . --framework nuxt to create one in an empty folder.`)
+      }
+      try {
+        const framework = await chooseStarter(process.cwd())
+        if (framework) await scaffoldProject({ dir: '.', cwd: process.cwd(), commandName: name, framework })
+      } catch (error) {
+        fail(error.message ?? String(error))
+      }
+      return
     }
     await openControlPanel(name)
     return
@@ -435,6 +510,13 @@ export async function runCli(name, argv, options = {}) {
     pkgInfo = parseLegacyInstall(cmd, _.slice(1))
   } else {
     fail(`Unknown command: ${cmd}`, `Use \`${name}\`, \`${name} dev\`, or \`${name} add <package>\`.`)
+  }
+
+  const segments = pkgInfo.shortName.split('-')
+  if (FRAMEWORKS.includes(segments[0]) && segments[0] !== 'nuxt' &&
+      ['app', 'module', 'theme', 'kit'].includes(segments[1])) {
+    fail(`${pkgInfo.pkgName} targets ${segments[0]}, but this control panel manages a Nuxt desktop.`,
+      'Choose an extension built for the Nuxt host.')
   }
 
   const { pkgName, shortName, kind } = pkgInfo
@@ -466,7 +548,7 @@ export async function runCli(name, argv, options = {}) {
         branch: null,
         dryRun: true,
       })
-      process.exit(0)
+      return
     }
     try {
       await runNpmInstall(kind, pkgName, workspaceRoot)

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"owd-cli/bridge"
 
@@ -112,6 +113,13 @@ func removeStr(list []string, v string) []string {
 }
 
 func (m *TuiModel) startWizard(mode WizardMode) tea.Cmd {
+	if mode != WizardStartupCheck {
+		if err := validateNuxtSelections(m.pendingPackages, m.pendingTheme); err != nil {
+			m.statusMsg = err.Error()
+			m.addLog("✖ " + err.Error())
+			return nil
+		}
+	}
 	if mode == WizardStartupCheck {
 		q := BuildStartupCheckQueue(m.workspaceRoot, m.ctx, m.catalog, func(string) {})
 		hasWork := false
@@ -157,6 +165,33 @@ func (m *TuiModel) startWizard(mode WizardMode) tea.Cmd {
 		m.RunWizardEngine(mode, config, depsToRemove, catalogCopy, workspaceRoot, runtime, lastMethod)
 		return nil
 	}, m.listenToChannel())
+}
+
+// A declared framework prefix can be checked before touching the desktop config.
+// Missing UI-kit metadata cannot establish that two extensions are compatible.
+func validateNuxtSelections(pending map[string]bool, theme *string) error {
+	check := func(name string) error {
+		short := shortNameFromPkg(name)
+		parts := strings.SplitN(short, "-", 3)
+		if len(parts) >= 2 && knownFrameworks[parts[0]] && parts[0] != "nuxt" {
+			switch parts[1] {
+			case "app", "module", "theme", "kit":
+				return fmt.Errorf("%s targets %s; this desktop uses Nuxt", name, parts[0])
+			}
+		}
+		return nil
+	}
+	for name, install := range pending {
+		if install {
+			if err := check(name); err != nil {
+				return err
+			}
+		}
+	}
+	if theme != nil {
+		return check(*theme)
+	}
+	return nil
 }
 
 func (m *TuiModel) RunWizardEngine(
@@ -294,11 +329,10 @@ func (m *TuiModel) RunWizardEngine(
 
 		emitPhase(PhasePrepare)
 		log("ℹ Running pnpm run prepare:modules")
-		result = runtime.runProcessStream(workspaceRoot, "pnpm", []string{"run", "prepare:modules"})
-		if result.Err != nil {
+		if err := runtime.runOptionalPrepareModules(workspaceRoot); err != nil {
 			log("✖ prepare:modules failed")
 			emitPhase(PhaseFailed)
-			msgChan <- taskFinishedMsg{Success: false, Err: result.Err}
+			msgChan <- taskFinishedMsg{Success: false, Err: err}
 			return
 		}
 		log("✔ prepare:modules completed")
