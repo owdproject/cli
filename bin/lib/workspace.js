@@ -138,7 +138,7 @@ export function loadSettings(workspaceRoot, metaDir = null) {
   const defaults = {
     devPort: 3000,
     githubUser: null,
-    githubOrgs: ['owdproject'],
+    githubOrgs: ['owdproject', 'dxlliv'],
     installMode: /** @type {InstallMode} */ ('npm'),
     catalogSort: /** @type {CatalogSortMode} */ ('updated'),
     catalogNewDays: 14,

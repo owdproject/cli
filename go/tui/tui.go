@@ -393,7 +393,7 @@ func (m *TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if len(m.ctx.Settings.GithubOrgs) > 0 {
 					tiOrgs.SetValue(strings.Join(m.ctx.Settings.GithubOrgs, ", "))
 				} else {
-					tiOrgs.SetValue("owdproject, atproto-os")
+					tiOrgs.SetValue("owdproject, dxlliv")
 				}
 				m.settingsOrgsInput = tiOrgs
 

@@ -1624,7 +1624,7 @@ export async function runCp(commandName = 'desktop') {
     updateCatalogKeysState()
     settingsOverlay.show()
     renderSettingsPanel()
-    trustedOrgsInput.setValue((settings.githubOrgs ?? ['owdproject']).join(', '))
+    trustedOrgsInput.setValue((settings.githubOrgs ?? ['owdproject', 'dxlliv']).join(', '))
     trustedOrgsInput.focus()
     setStatus('Settings — Enter save · t test SSH · Esc cancel')
     screen.render()
@@ -2058,7 +2058,7 @@ export async function runCp(commandName = 'desktop') {
     const orgsRaw = trustedOrgsInput.getValue().trim()
     const githubOrgs = orgsRaw
       ? orgsRaw.split(',').map((s) => s.trim()).filter(Boolean)
-      : ['owdproject']
+      : ['owdproject', 'dxlliv']
     const user = settings.githubUser || (sshAuthStatus?.available ? sshAuthStatus.githubLogin : null)
     settings = { ...settings, githubUser: user, githubOrgs }
     saveSettings(workspaceRoot, settings)
