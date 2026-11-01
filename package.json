@@ -1,6 +1,6 @@
 {
   "name": "@owdproject/cli",
-  "version": "4.0.0-alpha.4",
+  "version": "4.0.0-alpha.5",
   "description": "Control Panel and Command Line Interface for Open Web Desktop",
   "keywords": [
     "owd",
