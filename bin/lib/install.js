@@ -341,7 +341,41 @@ export async function runPrepareModules(workspaceRoot, _stdio = 'inherit') {
   }
 }
 
-
+/**
+ * Builds `--stub` distributions for every workspace package that needs one, so
+ * Nuxt can resolve freshly cloned apps/modules/themes. Prefers the workspace
+ * `prepare:stubs` script; falls back to a direct recursive `dev:prepare` for
+ * older generated workspaces that predate it.
+ * @param {string} workspaceRoot
+ * @returns {Promise<{ ok: boolean, error?: string }>}
+ */
+export async function runPrepareStubs(workspaceRoot) {
+  try {
+    await spawnAsync('pnpm', ['run', 'prepare:stubs'], { cwd: workspaceRoot })
+    return { ok: true }
+  } catch (primaryError) {
+    try {
+      await spawnAsync(
+        'pnpm',
+        [
+          '-r',
+          '--filter', './apps/*',
+          '--filter', './packages/*',
+          '--filter', './themes/*',
+          '--filter', './plugins/*',
+          '--if-present',
+          'run', 'dev:prepare',
+        ],
+        { cwd: workspaceRoot },
+      )
+      return { ok: true }
+    } catch (fallbackError) {
+      const err = primaryError ?? fallbackError
+      const message = err?.message?.split('\n').find((l) => l.trim()) ?? String(err)
+      return { ok: false, error: message }
+    }
+  }
+}
 
 export function printPlan({ pkgName, kind, targetDir, source, branch, dryRun }) {
   const kindMeta = KINDS[kind]

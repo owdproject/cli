@@ -17,6 +17,7 @@ import {
   installPackage,
   materializeToWorkspace,
   runPrepareModules,
+  runPrepareStubs,
   spawnAsync,
   resolveInstallPlan,
   cloneRepo,
@@ -107,6 +108,7 @@ export async function executeInstallPlan(ctx) {
   calculatedTotal += actualMaterialize.length // Cloning loop
   if (willClone) {
     calculatedTotal += 1 // Installing dependencies
+    calculatedTotal += 1 // Preparing workspace stubs
     calculatedTotal += expectedClonedPackages.length // Preparing loop
     calculatedTotal += 1 // Finalizing workspace
   }
@@ -317,8 +319,20 @@ export async function executeInstallPlan(ctx) {
       ctx.clearLogs()
       try {
         await spawnAsync('pnpm', ['install'], { cwd: workspaceRoot })
-      } catch {
-        // Non-fatal
+      } catch (err) {
+        const msg = err.message?.split('\n').find(l => l.trim()) ?? String(err)
+        failures.push({ pkg: 'pnpm install', error: msg })
+        ctx.setStatus(`pnpm install failed: ${msg}`, 'error')
+        ctx.screen.render()
+      }
+
+      bump('Preparing workspace…')
+      ctx.clearLogs()
+      const prepared = await runPrepareStubs(workspaceRoot)
+      if (!prepared.ok) {
+        failures.push({ pkg: 'prepare:stubs', error: prepared.error })
+        ctx.setStatus(`Stub build failed: ${prepared.error}`, 'error')
+        ctx.screen.render()
       }
     }
 
@@ -673,7 +687,7 @@ export async function runStartupInstallFlow(ctx, { isStartup = false } = {}) {
 
     if (didClone) {
       if (!ctx.isInstalling()) {
-        dynTotal += 1 + allCloned.length + 1
+        dynTotal += 2 + allCloned.length + 1
         syncProgress.total = dynTotal
         openProgress()
         installSpinnerTimer = setInterval(() => {
@@ -683,7 +697,7 @@ export async function runStartupInstallFlow(ctx, { isStartup = false } = {}) {
           ctx.screen.render()
         }, 150)
       } else {
-        bump('', 1 + allCloned.length + 1)
+        bump('', 2 + allCloned.length + 1)
         step--
         syncProgress.step = step
       }
@@ -692,8 +706,18 @@ export async function runStartupInstallFlow(ctx, { isStartup = false } = {}) {
       ctx.clearLogs()
       try {
         await spawnAsync('pnpm', ['install'], { cwd: workspaceRoot })
-      } catch {
-        // Non-fatal
+      } catch (err) {
+        const msg = err.message?.split('\n').find(l => l.trim()) ?? String(err)
+        ctx.setStatus(`pnpm install failed: ${msg}`, 'error')
+        ctx.screen.render()
+      }
+
+      bump('Preparing workspace…')
+      ctx.clearLogs()
+      const prepared = await runPrepareStubs(workspaceRoot)
+      if (!prepared.ok) {
+        ctx.setStatus(`Stub build failed: ${prepared.error}`, 'error')
+        ctx.screen.render()
       }
     }
   } catch (err) {

@@ -222,7 +222,9 @@ function buildTemplateDesktopPackageJson(versions) {
       build: 'nuxt generate',
       dev: 'nuxt dev --host',
       generate: 'nuxt generate --dev',
-      postinstall: 'nuxt prepare',
+      // Build workspace stubs first: the desktop may depend on cloned
+      // apps/modules/themes that Nuxt cannot resolve before they are stubbed.
+      postinstall: 'pnpm run --dir .. prepare:stubs && nuxt prepare',
       preview: 'nuxt preview',
     },
     dependencies: Object.fromEntries(

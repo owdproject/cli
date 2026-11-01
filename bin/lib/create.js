@@ -11,6 +11,7 @@ import {
 import { addToDesktopConfig } from './config.js'
 import {
   linkWorkspacePackage,
+  runPrepareStubs,
   spawnAsync,
 } from './install.js'
 import { createRequire } from 'node:module'
@@ -34,12 +35,10 @@ async function cloneTemplate(gitUrl, destDir) {
   try {
     await spawnAsync('git', ['clone', '--depth', '1', gitUrl, destDir])
   } catch (err) {
-    if (gitUrl.startsWith('git@')) {
-      const httpsUrl = gitUrl
-        .replace('git@github.com:', 'https://github.com/')
-        .replace(/\.git$/, '') + '.git'
-      console.log(`SSH clone failed, trying HTTPS fallback: ${httpsUrl}`)
-      await spawnAsync('git', ['clone', '--depth', '1', httpsUrl, destDir])
+    if (gitUrl.startsWith('https://github.com/')) {
+      const sshUrl = gitUrl.replace('https://github.com/', 'git@github.com:')
+      console.log(`HTTPS clone failed, trying SSH fallback: ${sshUrl}`)
+      await spawnAsync('git', ['clone', '--depth', '1', sshUrl, destDir])
     } else {
       throw err
     }
@@ -166,8 +165,8 @@ export async function runCreateCli(options = {}) {
 
   if (!templateSrc) {
     const gitUrl = kind === 'app'
-      ? 'git@github.com:owdproject/app-template.git'
-      : 'git@github.com:owdproject/module-template.git'
+      ? 'https://github.com/owdproject/app-template.git'
+      : 'https://github.com/owdproject/module-template.git'
 
     console.log(`Cloning template from ${gitUrl}...`)
     try {
@@ -243,12 +242,12 @@ export async function runCreateCli(options = {}) {
 
   addToDesktopConfig(configPath, workspaceRoot, KINDS[kind].configKey, pkgFullName)
 
-  // Run dev:prepare
-  console.log(`Running dev:prepare on ${pkgFullName}...`)
-  try {
-    await spawnAsync('pnpm', ['--filter', pkgFullName, 'run', 'dev:prepare'], { cwd: workspaceRoot })
-  } catch (err) {
-    console.warn(`(warning: dev:prepare failed — it's normal if package does not have the script)`)
+  // Build stubs for the new package (and any other workspace package) so the
+  // desktop can resolve it without a full build.
+  console.log(`Preparing workspace for ${pkgFullName}...`)
+  const prepared = await runPrepareStubs(workspaceRoot)
+  if (!prepared.ok) {
+    console.warn(`(warning: stub build failed — ${prepared.error})`)
   }
 
   console.log(`\n✓ Scaffolded and registered new ${kind}: ${pkgFullName}\n`)
