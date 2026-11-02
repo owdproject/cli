@@ -398,7 +398,10 @@ export async function runCli(name, argv, options = {}) {
       } catch (error) {
         fail(`Cannot read project profile: ${error.message}`)
       }
-      if (profile.framework !== 'nuxt') {
+      // Frameworks the control panel can drive. Planned hosts (vue/svelte/
+      // angular/astro) still fail until their panel support lands.
+      const panelFrameworks = ['nuxt', 'react']
+      if (!panelFrameworks.includes(profile.framework ?? 'nuxt')) {
         fail(`The control panel does not yet support the ${profile.framework ?? 'unknown'} host.`,
           'Use this project’s own scripts until its adapter is supported.')
       }

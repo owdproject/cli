@@ -6,7 +6,9 @@ import {
   findWorkspaceRoot,
   loadSettings,
   desktopPaths,
-  saveSettings
+  saveSettings,
+  readProjectFramework,
+  detectStarterGap
 } from './lib/workspace.js'
 import {
   readDesktopConfig,
@@ -63,7 +65,7 @@ function getWorkspaceContext() {
     console.error('Config load error:', err)
   }
   const deps = readDesktopDependencies(paths.packageJson)
-  return { workspaceRoot, settings, paths, config, deps }
+  return { workspaceRoot, settings, paths, config, deps, framework: readProjectFramework(workspaceRoot), starter: detectStarterGap(workspaceRoot) }
 }
 
 async function main() {
@@ -79,6 +81,8 @@ async function main() {
         config: ctx.config,
         deps: ctx.deps,
         paths: ctx.paths,
+        framework: ctx.framework,
+        starter: ctx.starter,
       }, null, 2))
     } else if (cmd === '--catalog') {
       const ctx = getWorkspaceContext()

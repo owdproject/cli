@@ -31,6 +31,8 @@ func NewModel(root string) TuiModel {
 		termHeight:        40,
 		lastInstallMethod: "npm",
 		logTailerStarted:  false,
+		mouseEnabled:      true,
+		logViewHeight:     20,
 		pendingPackages:   make(map[string]bool),
 		pendingTheme:      nil,
 		workQueue:         NewWorkQueue(),
@@ -274,6 +276,29 @@ func (m *TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.selectedIndex < len(items)-1 {
 				m.selectedIndex++
 			}
+		case "pgup":
+			m.scrollLogs(m.logViewHeight)
+		case "ctrl+u":
+			m.scrollLogs(m.logViewHeight)
+		case "pgdown":
+			m.scrollLogs(-m.logViewHeight)
+		case "ctrl+d":
+			m.scrollLogs(-m.logViewHeight)
+		case "home":
+			m.scrollLogs(m.maxLogScroll())
+		case "end":
+			m.logScrollOffset = 0
+			m.statusMsg = "Logs: following tail"
+		case "y":
+			return m, m.copyLogsCmd()
+		case "m":
+			m.mouseEnabled = !m.mouseEnabled
+			if m.mouseEnabled {
+				m.statusMsg = "Mouse capture ON — [m] to release for select & copy"
+				return m, func() tea.Msg { return tea.EnableMouseCellMotion() }
+			}
+			m.statusMsg = "Mouse capture OFF — select & copy with your terminal, [m] to re-enable"
+			return m, func() tea.Msg { return tea.DisableMouse() }
 		case "r":
 			m.loading = true
 			m.statusMsg = "Refreshing package catalog…"
@@ -289,7 +314,7 @@ func (m *TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.activeTab, m.selectedIndex, m.scrollOffset = 2, 0, 0
 			found := false
 			for i, item := range m.getActiveItems() {
-				if item.Name == nuxtFileService {
+				if item.Name == m.fileServicePackage() {
 					m.selectedIndex = i
 					found = true
 					break
@@ -298,7 +323,7 @@ func (m *TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if found {
 				m.statusMsg = "File service: Space selects, s applies changes"
 			} else {
-				m.statusMsg = "File service: not in catalog · desktop add nuxt-module-fs"
+				m.statusMsg = "File service: not in catalog · desktop add " + strings.TrimPrefix(m.fileServicePackage(), "@owdproject/")
 			}
 			m.addLog(m.statusMsg)
 		case "d":
@@ -414,6 +439,12 @@ func (m *TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.ctx = msg.Ctx
 			m.statusMsg = "Workspace loaded."
 
+			if m.ctx != nil && m.ctx.Starter.Stale {
+				m.addLog("⚠ Starter outdated: " + strings.Join(m.ctx.Starter.Missing, ", ") +
+					" — adding apps may fail. Fix: recreate the desktop with a current starter, or add the stub pipeline (scripts/prepare-stubs.mjs + prepare:stubs + postinstall).")
+				m.statusMsg = "Starter outdated — run 'desktop' from a current starter or update the stub pipeline"
+			}
+
 			if !m.logTailerStarted && m.ctx != nil {
 				m.logTailerStarted = true
 				logPath := filepath.Join(m.ctx.Paths.MetaDir, "dev.log")
@@ -496,6 +527,17 @@ func (m *TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case clearLogsMsg:
 		m.logLines = []string{}
+		m.logScrollOffset = 0
+		return m, m.listenToChannel()
+
+	case clipboardResultMsg:
+		if msg.err != nil {
+			m.statusMsg = "Clipboard unavailable — press [m] to release the mouse and copy with your terminal"
+			m.addLog("⚠ Copy failed: " + msg.err.Error() + " — press [m] and select with your terminal")
+		} else {
+			m.statusMsg = fmt.Sprintf("Copied %d log line(s) to clipboard", msg.lines)
+			m.addLog(fmt.Sprintf("✔ Copied %d log line(s) to clipboard", msg.lines))
+		}
 		return m, m.listenToChannel()
 
 	case taskFinishedMsg:
@@ -507,7 +549,7 @@ func (m *TuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.statusMsg = "Task completed."
 			m.addLog("✓ Wizard completed successfully")
 			if m.serverRunning {
-				m.addLog("ℹ desktop.config.ts updated — Nuxt restarts automatically (see dev server log)")
+				m.addLog("ℹ desktop.config.ts updated — " + frameworkLabel(m.projectFramework()) + " restarts automatically (see dev server log)")
 			}
 
 			if m.startServerAfterSetup {
@@ -799,10 +841,10 @@ func (m *TuiModel) loadPackageDetails(pkg *bridge.CatalogEntry) {
 				}
 				m.promptPkgDeps = append(m.promptPkgDeps, name)
 			}
-			if name == "@owdproject/nuxt-kit-primevue" {
+			if name == "@owdproject/"+m.projectFramework()+"-kit-primevue" {
 				m.promptPkgHasPrimevue = true
 			}
-			if name == "@owdproject/nuxt-kit-tailwind" || name == "tailwindcss" {
+			if name == "@owdproject/"+m.projectFramework()+"-kit-tailwind" || name == "tailwindcss" {
 				m.promptPkgHasTailwind = true
 			}
 		}

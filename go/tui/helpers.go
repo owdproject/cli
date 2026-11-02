@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
 	"owd-cli/bridge"
@@ -709,13 +710,24 @@ func drawPanel(w, h int, title string, content string, active bool) string {
 }
 
 type WorkspaceVersions struct {
-	Nuxt string
-	Pnpm string
-	Owd  string
+	Framework string
+	Pnpm      string
+	Owd       string
 }
 
-func getVersions(root string, workspaceRoot string) WorkspaceVersions {
-	vers := WorkspaceVersions{Nuxt: "—", Pnpm: "—", Owd: "—"}
+// frameworkLabel renders a framework segment for display ("nuxt" -> "Nuxt").
+func frameworkLabel(framework string) string {
+	if framework == "" {
+		return "Nuxt"
+	}
+	return strings.ToUpper(framework[:1]) + framework[1:]
+}
+
+func getVersions(root string, workspaceRoot string, framework string) WorkspaceVersions {
+	if framework == "" {
+		framework = "nuxt"
+	}
+	vers := WorkspaceVersions{Framework: "—", Pnpm: "—", Owd: "—"}
 	
 	rootPkgPath := filepath.Join(root, "package.json")
 	if data, err := os.ReadFile(rootPkgPath); err == nil {
@@ -729,12 +741,12 @@ func getVersions(root string, workspaceRoot string) WorkspaceVersions {
 					vers.Pnpm = strings.TrimSpace(vers.Pnpm)
 				}
 			}
-			if strings.Contains(l, `"nuxt"`) {
+			if strings.Contains(l, `"`+framework+`"`) {
 				parts := strings.Split(l, ":")
 				if len(parts) >= 2 {
 					v := strings.Trim(parts[1], " \t\r\n,\"^~")
 					v = strings.ReplaceAll(v, `"`, "")
-					vers.Nuxt = strings.TrimSpace(v)
+					vers.Framework = strings.TrimSpace(v)
 				}
 			}
 		}
@@ -912,5 +924,118 @@ func (m *TuiModel) logInfo(msg string)    { m.addLog("ℹ " + msg) }
 func (m *TuiModel) logSuccess(msg string) { m.addLog("✔ " + msg) }
 func (m *TuiModel) logWarn(msg string)    { m.addLog("⚠ " + msg) }
 func (m *TuiModel) logError(msg string)   { m.addLog("✖ " + msg) }
+
+// ─────────────────────────────────────────────
+// Framework awareness
+// ─────────────────────────────────────────────
+
+// projectFramework is the framework the current workspace targets. It comes from
+// `.owd/project.json` (via the bridge) and defaults to nuxt for workspaces with no
+// profile.
+func (m *TuiModel) projectFramework() string {
+	if m.ctx != nil && m.ctx.Framework != "" {
+		return m.ctx.Framework
+	}
+	return "nuxt"
+}
+
+// frameworkOfShort returns the framework segment of a package short name
+// (nuxt-app-about -> nuxt), or "" when the name carries no known framework.
+func frameworkOfShort(short string) string {
+	name := shortNameFromPkg(short)
+	idx := strings.Index(name, "-")
+	if idx <= 0 {
+		return ""
+	}
+	if knownFrameworks[name[:idx]] {
+		return name[:idx]
+	}
+	return ""
+}
+
+// entryMatchesFramework reports whether a catalog entry belongs to the target
+// framework. Entries without a framework segment (core, cli, legacy names) are
+// always kept.
+func entryMatchesFramework(framework, short string) bool {
+	fw := frameworkOfShort(short)
+	if fw == "" || framework == "" {
+		return true
+	}
+	return fw == framework
+}
+
+// fileServicePackage is the framework's filesystem module package name.
+func (m *TuiModel) fileServicePackage() string {
+	return "@owdproject/" + m.projectFramework() + "-module-fs"
+}
+
+// ─────────────────────────────────────────────
+// Log panel: scroll & copy
+// ─────────────────────────────────────────────
+
+// maxLogScroll is the highest offset the log viewport can scroll to.
+func (m *TuiModel) maxLogScroll() int {
+	max := len(m.logLines) - m.logViewHeight
+	if max < 0 {
+		return 0
+	}
+	return max
+}
+
+// scrollLogs moves the log viewport. A positive delta scrolls up (older lines).
+func (m *TuiModel) scrollLogs(delta int) {
+	off := m.logScrollOffset + delta
+	if off < 0 {
+		off = 0
+	}
+	if max := m.maxLogScroll(); off > max {
+		off = max
+	}
+	m.logScrollOffset = off
+	if off == 0 {
+		m.statusMsg = "Logs: following tail"
+	} else {
+		m.statusMsg = fmt.Sprintf("Logs: scrolled up %d line(s) — [end] to follow", off)
+	}
+}
+
+// copyLogsCmd copies the whole log buffer to the system clipboard.
+func (m *TuiModel) copyLogsCmd() tea.Cmd {
+	if len(m.logLines) == 0 {
+		m.statusMsg = "No logs to copy"
+		return nil
+	}
+	text := strings.Join(m.logLines, "\n")
+	lines := len(m.logLines)
+	return func() tea.Msg {
+		return clipboardResultMsg{lines: lines, err: copyToClipboard(text)}
+	}
+}
+
+// copyToClipboard writes text to the first available clipboard tool.
+func copyToClipboard(text string) error {
+	candidates := [][]string{
+		{"wl-copy"},
+		{"xclip", "-selection", "clipboard"},
+		{"xsel", "--clipboard", "--input"},
+		{"pbcopy"},
+	}
+	var tried []string
+	for _, c := range candidates {
+		if _, err := exec.LookPath(c[0]); err != nil {
+			continue
+		}
+		tried = append(tried, c[0])
+		cmd := exec.Command(c[0], c[1:]...)
+		cmd.Stdin = strings.NewReader(text)
+		if err := cmd.Run(); err == nil {
+			return nil
+		}
+	}
+	if len(tried) == 0 {
+		return fmt.Errorf("no clipboard tool found (install wl-clipboard/xclip/xsel, or use macOS)")
+	}
+	return fmt.Errorf("clipboard tool failed (%s)", strings.Join(tried, ", "))
+}
 
 

@@ -108,6 +108,60 @@ export function findWorkspaceRoot(startDir = process.cwd()) {
   }
 }
 
+/**
+ * Reads the project framework profile written by `desktop init`
+ * (`.owd/project.json`). Workspaces without a profile default to `nuxt`.
+ * @param {string} workspaceRoot
+ * @returns {string}
+ */
+export function readProjectFramework(workspaceRoot) {
+  const profilePath = join(workspaceRoot, '.owd', 'project.json')
+  if (!existsSync(profilePath)) return 'nuxt'
+  try {
+    const profile = JSON.parse(readFileSync(profilePath, 'utf8'))
+    const framework = typeof profile?.framework === 'string' ? profile.framework.trim() : ''
+    return framework || 'nuxt'
+  } catch {
+    return 'nuxt'
+  }
+}
+
+/**
+ * Detects a starter generated before the stub pipeline existed. Such a desktop
+ * runs `nuxt prepare` before cloned apps/themes/modules are stubbed, so adding a
+ * workspace package fails with "module could not be loaded".
+ * @param {string} workspaceRoot
+ * @returns {{ stale: boolean, missing: string[] }}
+ */
+export function detectStarterGap(workspaceRoot) {
+  const missing = []
+
+  if (!existsSync(join(workspaceRoot, 'scripts', 'prepare-stubs.mjs'))) {
+    missing.push('scripts/prepare-stubs.mjs')
+  }
+
+  let rootScripts = {}
+  try {
+    rootScripts = JSON.parse(readFileSync(join(workspaceRoot, 'package.json'), 'utf8')).scripts ?? {}
+  } catch {
+    /* unreadable root package.json: report via the missing script below */
+  }
+  if (!rootScripts['prepare:stubs']) missing.push('package.json#scripts.prepare:stubs')
+
+  let postinstall = ''
+  try {
+    const desktopPkg = JSON.parse(readFileSync(join(workspaceRoot, 'desktop', 'package.json'), 'utf8'))
+    postinstall = desktopPkg.scripts?.postinstall ?? ''
+  } catch {
+    /* unreadable desktop package.json: report via the missing postinstall below */
+  }
+  if (!postinstall.includes('prepare:stubs')) {
+    missing.push('desktop/package.json#scripts.postinstall')
+  }
+
+  return { stale: missing.length > 0, missing }
+}
+
 export function desktopMetaDir(workspaceRoot) {
   return join(workspaceRoot, '.desktop')
 }

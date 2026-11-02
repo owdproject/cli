@@ -442,7 +442,7 @@ func (m *TuiModel) triggerUninstall(pkg *bridge.CatalogEntry) (tea.Model, tea.Cm
 }
 
 func (m *TuiModel) triggerInstall(pkg *bridge.CatalogEntry, method string) (tea.Model, tea.Cmd) {
-	if err := validateNuxtSelections(map[string]bool{pkg.Name: true}, nil); err != nil {
+	if err := validateFrameworkSelections(m.projectFramework(), map[string]bool{pkg.Name: true}, nil); err != nil {
 		m.statusMsg = err.Error()
 		m.addLog("✖ " + err.Error())
 		return m, nil

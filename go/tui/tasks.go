@@ -596,16 +596,17 @@ func (m *TuiModel) RunWipeWorkspaceTask() {
 
 		// Step 4: Reset desktop.config.ts
 		step++
+		framework := m.projectFramework()
 		runtime.msgChan <- setupProgressMsg{Step: step, Total: totalSteps, Label: "Resetting desktop config…"}
 		runtime.msgChan <- logLineMsg("ℹ Resetting desktop/desktop.config.ts to default…")
-		defaultConfig := `import { defineDesktopConfig } from '@owdproject/core'
+		defaultConfig := fmt.Sprintf(`import { defineDesktopConfig } from '@owdproject/%s'
 
 export default defineDesktopConfig({
   theme: '',
   apps: [],
   modules: [],
 })
-`
+`, framework)
 		configPath := filepath.Join(workspaceRoot, "desktop", "desktop.config.ts")
 		if err := os.WriteFile(configPath, []byte(defaultConfig), 0644); err != nil {
 			runtime.msgChan <- logLineMsg(fmt.Sprintf("✗ Error resetting desktop config: %v", err))
@@ -616,26 +617,44 @@ export default defineDesktopConfig({
 		// Step 5: Reset package.json
 		step++
 		runtime.msgChan <- setupProgressMsg{Step: step, Total: totalSteps, Label: "Resetting package dependencies…"}
-		runtime.msgChan <- logLineMsg("ℹ Resetting desktop/package.json dependencies to core only…")
-		defaultPackageJson := `{
-  "name": "@owdproject/nuxt-desktop",
+		runtime.msgChan <- logLineMsg("ℹ Resetting desktop/package.json dependencies to core + adapter…")
+		var defaultPackageJson string
+		switch framework {
+		case "react":
+			defaultPackageJson = `{
+  "name": "@owdproject/react-desktop",
   "private": true,
-  "nx": {
-    "name": "desktop"
-  },
+  "type": "module",
   "scripts": {
-    "build": "nuxt generate",
-    "dev": "nuxt dev --host",
-    "generate": "nuxt generate --dev",
-    "postinstall": "nuxt prepare",
-    "preview": "nuxt preview",
-    "desktop": "desktop"
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
   },
   "dependencies": {
-    "@owdproject/core": "workspace:*"
+    "@owdproject/core": "workspace:*",
+    "@owdproject/react": "workspace:*"
   }
 }
 `
+		default:
+			defaultPackageJson = fmt.Sprintf(`{
+  "name": "@owdproject/%s-desktop",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "%s dev --host",
+    "build": "%s generate",
+    "generate": "%s generate --dev",
+    "postinstall": "pnpm run --dir .. prepare:stubs && %s prepare",
+    "preview": "%s preview"
+  },
+  "dependencies": {
+    "@owdproject/core": "workspace:*",
+    "@owdproject/%s": "workspace:*"
+  }
+}
+`, framework, framework, framework, framework, framework, framework, framework)
+		}
 		pkgJsonPath := filepath.Join(workspaceRoot, "desktop", "package.json")
 		if err := os.WriteFile(pkgJsonPath, []byte(defaultPackageJson), 0644); err != nil {
 			runtime.msgChan <- logLineMsg(fmt.Sprintf("✗ Error resetting package.json: %v", err))

@@ -29,6 +29,11 @@ type catalogLoadedMsg struct {
 type logLineMsg string
 type clearLogsMsg struct{}
 
+type clipboardResultMsg struct {
+	lines int
+	err   error
+}
+
 type taskFinishedMsg struct {
 	Success bool
 	Err     error
@@ -174,6 +179,11 @@ type TuiModel struct {
 	// Selection
 	selectedIndex int
 	scrollOffset  int
+
+	// Log panel
+	logScrollOffset int  // 0 = follow tail; >0 scrolls up into older lines
+	logViewHeight   int  // height of the log viewport from the last render (for paging)
+	mouseEnabled    bool // when false, the terminal regains native select/copy
 
 	// Prompts/Modals
 	activePrompt PromptType

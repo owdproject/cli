@@ -39,19 +39,30 @@ func TestBuildConfigFromPendingRemovals(t *testing.T) {
 	}
 }
 
-func TestNuxtSelectionsRejectOtherFrameworksBeforeSaving(t *testing.T) {
-	if err := validateNuxtSelections(map[string]bool{"@owdproject/react-app-example": true}, nil); err == nil {
+func TestFrameworkSelectionsRejectOtherFrameworksBeforeSaving(t *testing.T) {
+	if err := validateFrameworkSelections("nuxt", map[string]bool{"@owdproject/react-app-example": true}, nil); err == nil {
 		t.Fatal("a React app must not be added to a Nuxt desktop")
 	}
-	if err := validateNuxtSelections(map[string]bool{"@owdproject/react-app-example": false}, nil); err != nil {
+	if err := validateFrameworkSelections("nuxt", map[string]bool{"@owdproject/react-app-example": false}, nil); err != nil {
 		t.Fatalf("an existing incompatible app must remain removable: %v", err)
 	}
 	theme := "@owdproject/react-theme-win95"
-	if err := validateNuxtSelections(nil, &theme); err == nil {
+	if err := validateFrameworkSelections("nuxt", nil, &theme); err == nil {
 		t.Fatal("a React theme must not be selected for a Nuxt desktop")
 	}
-	if err := validateNuxtSelections(map[string]bool{"@owdproject/nuxt-app-todo": true}, nil); err != nil {
+	if err := validateFrameworkSelections("nuxt", map[string]bool{"@owdproject/nuxt-app-todo": true}, nil); err != nil {
 		t.Fatalf("a Nuxt app should remain selectable: %v", err)
+	}
+	// The same checks are symmetric for a React desktop.
+	if err := validateFrameworkSelections("react", map[string]bool{"@owdproject/react-app-example": true}, nil); err != nil {
+		t.Fatalf("a React app should be selectable in a React desktop: %v", err)
+	}
+	if err := validateFrameworkSelections("react", map[string]bool{"@owdproject/nuxt-app-todo": true}, nil); err == nil {
+		t.Fatal("a Nuxt app must not be added to a React desktop")
+	}
+	// No profile defaults to nuxt, preserving legacy behavior.
+	if err := validateFrameworkSelections("", map[string]bool{"@owdproject/react-app-example": true}, nil); err == nil {
+		t.Fatal("an empty framework must default to nuxt")
 	}
 }
 

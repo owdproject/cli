@@ -20,7 +20,13 @@ import {
 } from './npmVersions.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
-const BLUEPRINT_ROOT = resolve(__dirname, '../../../core/template-blueprint')
+
+/**
+ * Legacy location of the starter blueprint (inside the `@owdproject/core`
+ * checkout). Kept as a fallback while repositories migrate to a blueprint that
+ * lives in the desktop distribution itself.
+ */
+const LEGACY_BLUEPRINT_ROOT = resolve(__dirname, '../../../core/template-blueprint')
 
 export const STARTER_DESKTOP_DEPS = [
   '@owdproject/core',
@@ -79,13 +85,36 @@ const DESKTOP_SKIP_NAMES = new Set([
 const BLUEPRINT_SKIP_NAMES = new Set(['root-package.json'])
 
 /**
- * @param {string} blueprintRoot
+ * A directory is a usable starter blueprint when it ships the workspace file and
+ * the root package template.
+ * @param {string | undefined} dir
  */
-export function resolveBlueprintRoot(blueprintRoot = BLUEPRINT_ROOT) {
-  if (!existsSync(join(blueprintRoot, 'pnpm-workspace.yaml'))) {
-    throw new Error(`Template blueprint not found at ${blueprintRoot}`)
+function isBlueprintRoot(dir) {
+  return (
+    Boolean(dir) &&
+    existsSync(join(dir, 'pnpm-workspace.yaml')) &&
+    existsSync(join(dir, 'root-package.json'))
+  )
+}
+
+/**
+ * Resolve the starter blueprint directory.
+ *
+ * Prefers `<workspaceRoot>/template-blueprint` — the blueprint now lives in the
+ * desktop distribution repo — and falls back to the legacy `@owdproject/core`
+ * location so repositories that have not migrated yet still generate.
+ *
+ * @param {string} [workspaceRoot]
+ */
+export function resolveBlueprintRoot(workspaceRoot) {
+  const candidates = []
+  if (workspaceRoot) candidates.push(join(workspaceRoot, 'template-blueprint'))
+  candidates.push(LEGACY_BLUEPRINT_ROOT)
+  const found = candidates.find(isBlueprintRoot)
+  if (!found) {
+    throw new Error(`Template blueprint not found. Looked in:\n  ${candidates.join('\n  ')}`)
   }
-  return blueprintRoot
+  return found
 }
 
 /**
@@ -190,8 +219,8 @@ export async function resolveTemplateVersions(workspaceRoot, options = {}) {
 /**
  * @param {Record<string, string>} versions
  */
-function buildTemplateRootPackageJson(versions) {
-  const base = JSON.parse(readFileSync(join(BLUEPRINT_ROOT, 'root-package.json'), 'utf8'))
+function buildTemplateRootPackageJson(versions, blueprintRoot) {
+  const base = JSON.parse(readFileSync(join(blueprintRoot, 'root-package.json'), 'utf8'))
   /** @type {Record<string, string>} */
   const devDependencies = {}
   for (const [name, range] of Object.entries(versions)) {
@@ -254,13 +283,13 @@ export function writeGeneratedFiles(workspaceRoot, outputRoot, ctx) {
   const { versions } = ctx
   const desktopSrc = join(workspaceRoot, 'desktop')
   const desktopOut = join(outputRoot, 'desktop')
-  const blueprint = resolveBlueprintRoot()
+  const blueprint = resolveBlueprintRoot(workspaceRoot)
 
   mkdirSync(outputRoot, { recursive: true })
 
   copyTree(blueprint, outputRoot, BLUEPRINT_SKIP_NAMES)
 
-  writeFileSync(join(outputRoot, 'package.json'), buildTemplateRootPackageJson(versions))
+  writeFileSync(join(outputRoot, 'package.json'), buildTemplateRootPackageJson(versions, blueprint))
 
   mkdirSync(desktopOut, { recursive: true })
   for (const file of DESKTOP_COPY_FILES) {
@@ -350,7 +379,7 @@ export async function generateTemplate(workspaceRoot, options = {}) {
   if (!existsSync(desktopPath)) {
     throw new Error(`Monorepo desktop/ not found at ${desktopPath}`)
   }
-  resolveBlueprintRoot()
+  resolveBlueprintRoot(workspaceRoot)
 
   const versions = await resolveTemplateVersions(workspaceRoot, { useCache })
 
@@ -366,7 +395,7 @@ export async function generateTemplate(workspaceRoot, options = {}) {
       if (isOwdScopedPackage(name)) console.log(`  ${name}  ${range}`)
     }
     console.log('\nSources:')
-    console.log(`  blueprint  ${BLUEPRINT_ROOT}`)
+    console.log(`  blueprint  ${resolveBlueprintRoot(workspaceRoot)}`)
     console.log(`  desktop/   ${desktopPath}`)
     console.log(`  monorepo   ${workspaceRoot}`)
     console.log('')

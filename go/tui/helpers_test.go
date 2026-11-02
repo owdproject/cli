@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"owd-cli/bridge"
@@ -93,5 +95,47 @@ func TestActiveThemeName(t *testing.T) {
 
 	if got := activeThemeName(nil, nil); got != "" {
 		t.Fatalf("expected empty theme, got %q", got)
+	}
+}
+
+func TestLogScrollClampsToWindow(t *testing.T) {
+	m := &TuiModel{logLines: []string{"a", "b", "c", "d", "e"}, logViewHeight: 2}
+
+	if got := m.maxLogScroll(); got != 3 {
+		t.Fatalf("maxLogScroll = %d, want 3", got)
+	}
+
+	m.scrollLogs(100)
+	if m.logScrollOffset != 3 {
+		t.Fatalf("scroll up clamp = %d, want 3", m.logScrollOffset)
+	}
+
+	m.scrollLogs(-100)
+	if m.logScrollOffset != 0 {
+		t.Fatalf("scroll down clamp = %d, want 0", m.logScrollOffset)
+	}
+
+	// Empty buffer and taller viewport never produce a negative max.
+	empty := &TuiModel{logLines: nil, logViewHeight: 10}
+	if got := empty.maxLogScroll(); got != 0 {
+		t.Fatalf("empty maxLogScroll = %d, want 0", got)
+	}
+}
+
+func TestGetVersionsReadsProjectFramework(t *testing.T) {
+	dir := t.TempDir()
+	pkg := "{\n  \"packageManager\": \"pnpm@11.9.0\",\n  \"devDependencies\": {\n    \"react\": \"^19.0.0\"\n  }\n}\n"
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(pkg), 0644); err != nil {
+		t.Fatal(err)
+	}
+	vers := getVersions(dir, dir, "react")
+	if vers.Framework != "19.0.0" {
+		t.Fatalf("Framework = %q, want 19.0.0", vers.Framework)
+	}
+	if vers.Pnpm != "11.9.0" {
+		t.Fatalf("Pnpm = %q, want 11.9.0", vers.Pnpm)
+	}
+	if frameworkLabel("react") != "React" {
+		t.Fatalf("frameworkLabel = %q, want React", frameworkLabel("react"))
 	}
 }

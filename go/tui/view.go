@@ -229,13 +229,13 @@ func (m *TuiModel) fileServiceStatus() string {
 	if m.ctx == nil {
 		return "loading"
 	}
-	if queued, ok := m.pendingPackages[nuxtFileService]; ok {
+	if queued, ok := m.pendingPackages[m.fileServicePackage()]; ok {
 		if queued {
 			return "add queued"
 		}
 		return "removal queued"
 	}
-	if containsStr(m.ctx.Config.Modules, nuxtFileService) {
+	if containsStr(m.ctx.Config.Modules, m.fileServicePackage()) {
 		return "configured"
 	}
 	return "not configured · f browse"
@@ -261,7 +261,7 @@ func (m *TuiModel) nextQuest() string {
 	if !m.serverRunning {
 		return "Quest 3/3 · Start your desktop [d]"
 	}
-	if !containsStr(m.ctx.Config.Modules, nuxtFileService) {
+	if !containsStr(m.ctx.Config.Modules, m.fileServicePackage()) {
 		return "Optional quest · Explore the file service [f]"
 	}
 	return "Desktop running · Explore apps [1] or modules [2]"
@@ -297,8 +297,9 @@ func (m *TuiModel) renderMetricsPanel(w, h int) string {
 	if m.ctx != nil && m.ctx.Paths.IsPlayground {
 		nuxtRoot = m.ctx.Paths.PackageDir
 	}
-	vers := getVersions(nuxtRoot, m.workspaceRoot)
-	lines = append(lines, kv("Nuxt", vers.Nuxt)+mutedStyle.Render(" · ")+kv("Core", vers.Owd))
+	framework := m.projectFramework()
+	vers := getVersions(nuxtRoot, m.workspaceRoot, framework)
+	lines = append(lines, kv(frameworkLabel(framework), vers.Framework)+mutedStyle.Render(" · ")+kv("Core", vers.Owd))
 
 	lines = append(lines, "")
 	lines = append(lines, cyanRegularStyle.Render(truncate(m.nextQuest(), w-2)))
@@ -350,7 +351,7 @@ func (m *TuiModel) renderCatalogPanel(w, h int, _ bool) string {
 	}
 	if m.activeTab == 2 && strings.HasPrefix(m.statusMsg, "File service: not in catalog") {
 		lines = append(lines, "  "+warnStyle.Render("File service is not listed in the catalog."))
-		lines = append(lines, "  "+boldStyle.Render("Run: desktop add nuxt-module-fs"))
+		lines = append(lines, "  "+boldStyle.Render("Run: desktop add "+strings.TrimPrefix(m.fileServicePackage(), "@owdproject/")))
 		lines = append(lines, "")
 	}
 
@@ -631,16 +632,37 @@ func (m *TuiModel) renderLogsPanel(w, h int) string {
 		lines = append(lines, "")
 	}
 
-	// Log lines — show last N that fit
+	// Log lines — windowed viewport with scroll support (0 = follow tail)
 	logH := h - len(lines) - 1
 	if logH < 1 {
 		logH = 1
 	}
-	logStart := len(m.logLines) - logH
+	m.logViewHeight = logH
+
+	maxStart := len(m.logLines) - logH
+	if maxStart < 0 {
+		maxStart = 0
+	}
+	offset := m.logScrollOffset
+	if offset > maxStart {
+		offset = maxStart
+	}
+	m.logScrollOffset = offset
+
+	viewH := logH
+	if offset > 0 && viewH > 1 {
+		lines = append(lines, mutedStyle.Render(fmt.Sprintf("  ▲ %d older — PgUp/PgDn · End to follow", offset)))
+		viewH--
+	}
+	logEnd := len(m.logLines) - offset
+	if logEnd < 0 {
+		logEnd = 0
+	}
+	logStart := logEnd - viewH
 	if logStart < 0 {
 		logStart = 0
 	}
-	for i := logStart; i < len(m.logLines); i++ {
+	for i := logStart; i < logEnd; i++ {
 		line := m.logLines[i]
 		line = truncate(line, w)
 		// Colorize log levels
@@ -790,6 +812,8 @@ func (m *TuiModel) renderStatusBar(w int) string {
 		barKeyStyle.Render("f")+barTextStyle.Render(" files"),
 		barKeyStyle.Render("p")+barTextStyle.Render(" path"),
 		barKeyStyle.Render("c")+barTextStyle.Render(" manage"),
+		barKeyStyle.Render("y")+barTextStyle.Render(" copy logs"),
+		barKeyStyle.Render("m")+barTextStyle.Render(" mouse"),
 	)
 
 	items := m.getActiveItems()
@@ -819,8 +843,14 @@ func (m *TuiModel) getActiveItems() []bridge.CatalogEntry {
 	if m.catalog == nil {
 		return nil
 	}
+	framework := m.projectFramework()
 	var res []bridge.CatalogEntry
 	for _, e := range m.catalog.Entries {
+		// Show only packages that belong to this project's framework; entries
+		// without a framework segment (core, cli, legacy) stay visible.
+		if !entryMatchesFramework(framework, e.ShortName) {
+			continue
+		}
 		switch m.activeTab {
 		case 0: // Internal
 			if e.Kind == "module" && !strings.HasPrefix(baseKindName(e.ShortName), "module-") {

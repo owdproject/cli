@@ -114,7 +114,7 @@ func removeStr(list []string, v string) []string {
 
 func (m *TuiModel) startWizard(mode WizardMode) tea.Cmd {
 	if mode != WizardStartupCheck {
-		if err := validateNuxtSelections(m.pendingPackages, m.pendingTheme); err != nil {
+		if err := validateFrameworkSelections(m.projectFramework(), m.pendingPackages, m.pendingTheme); err != nil {
 			m.statusMsg = err.Error()
 			m.addLog("✖ " + err.Error())
 			return nil
@@ -169,14 +169,17 @@ func (m *TuiModel) startWizard(mode WizardMode) tea.Cmd {
 
 // A declared framework prefix can be checked before touching the desktop config.
 // Missing UI-kit metadata cannot establish that two extensions are compatible.
-func validateNuxtSelections(pending map[string]bool, theme *string) error {
+func validateFrameworkSelections(framework string, pending map[string]bool, theme *string) error {
+	if framework == "" {
+		framework = "nuxt"
+	}
 	check := func(name string) error {
 		short := shortNameFromPkg(name)
 		parts := strings.SplitN(short, "-", 3)
-		if len(parts) >= 2 && knownFrameworks[parts[0]] && parts[0] != "nuxt" {
+		if len(parts) >= 2 && knownFrameworks[parts[0]] && parts[0] != framework {
 			switch parts[1] {
 			case "app", "module", "theme", "kit":
-				return fmt.Errorf("%s targets %s; this desktop uses Nuxt", name, parts[0])
+				return fmt.Errorf("%s targets %s; this desktop uses %s", name, parts[0], framework)
 			}
 		}
 		return nil
