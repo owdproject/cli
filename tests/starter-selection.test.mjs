@@ -9,6 +9,9 @@ import { runCli } from '../bin/cli.js'
 import { scaffoldProject } from '../bin/lib/scaffold.js'
 import { runNpmInstall } from '../bin/lib/install.js'
 
+// Default init tests use a complete local starter fixture, without network access.
+process.env.OWD_TEMPLATE_PATH = fileURLToPath(new URL('./fixtures/distribution/template', import.meta.url))
+
 const cli = resolve(dirname(fileURLToPath(import.meta.url)), '../bin/desktop.js')
 
 function run(command, args, cwd) {
@@ -59,9 +62,11 @@ test('init chooses each starter and records an isolated project profile', async 
       assert.match(result.stderr, new RegExp(`owd-scaffold-[^/]+/${framework}-desktop`))
       assert.doesNotMatch(result.stderr, /owd-scaffold-[^/]+\/client/)
     }
-    const reactPanel = await run(process.execPath, [cli], join(root, 'my-react'))
-    assert.notEqual(reactPanel.status, 0)
-    assert.match(reactPanel.stderr, /does not yet support the react host/)
+    // Exercise framework validation through a noninteractive command. Opening a
+    // TUI without a terminal tests the terminal environment, not React support.
+    const reactHelp = await run(process.execPath, [cli, '--help'], join(root, 'my-react'))
+    assert.equal(reactHelp.status, 0, reactHelp.stderr)
+    assert.match(reactHelp.stdout, /react/)
     const previousCwd = process.cwd()
     const previousLog = console.log
     let output = ''

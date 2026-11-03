@@ -1,0 +1,17 @@
+{
+  "name": "@owdproject/module-template-playground",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "nuxt dev",
+    "build": "nuxt build",
+    "generate": "nuxt generate"
+  },
+  "dependencies": {
+    "@owdproject/nuxt-app-todo": "^4.0.0-alpha.3",
+    "@owdproject/core": "^4.0.0-alpha.3",
+    "@owdproject/module-template": "workspace:*",
+    "@owdproject/nuxt-theme-paper": "^4.0.0-alpha.3",
+    "nuxt": "^4.4.4"
+  }
+}

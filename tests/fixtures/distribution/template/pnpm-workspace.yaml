@@ -1,0 +1,36 @@
+packages:
+  - desktop
+  - apps/*
+  - '!apps/*/playground'
+  - packages/*
+  - '!packages/*/playground'
+  - themes/*
+  - '!themes/*/playground'
+  - plugins/*
+
+linkWorkspacePackages: true
+preferWorkspacePackages: true
+shamefullyHoist: true
+strictPeerDependencies: false
+
+catalog:
+  typescript: ~6.0.3
+
+blockExoticSubdeps: false
+
+# pnpm 11 fails install when build scripts are not approved. The starter and the
+# packages it can clone use these, so approve their builds explicitly.
+allowBuilds:
+  '@owdproject/*': true
+  '@dxlliv/*': true
+  '@parcel/watcher': true
+  '@swc/core': true
+  better-sqlite3: true
+  esbuild: true
+  unrs-resolver: true
+  audiobuffer-to-wav: true
+  core-js: true
+
+# Use the freshly published @owdproject alpha versions instead of waiting for
+# pnpm's supply-chain minimum release age window.
+minimumReleaseAge: 0

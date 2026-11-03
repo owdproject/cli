@@ -90,3 +90,15 @@ pnpm desktop validate
 ## License
 
 This package is released under the [MIT License](LICENSE).
+
+## Local verification
+
+Run `npm test` for the CLI, scaffolding and package-content checks, then
+`cd go && go test ./...` for the control panel. JavaScript tests use local
+starter/extension fixtures and do not require a sibling desktop checkout.
+
+The npm package ships Go sources rather than a locally compiled executable.
+The launcher builds into `$XDG_CACHE_HOME/owd-cli` (or `~/.cache/owd-cli`) using
+a cache key derived from the platform, architecture and source contents. A
+source change therefore cannot reuse an obsolete binary. Without Go, the text
+starter picker and existing JavaScript control-panel fallback remain available.

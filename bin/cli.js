@@ -1,3 +1,4 @@
+import { ensureGoBinary } from './lib/goBinary.js'
 import { spawn, spawnSync, execSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { runDevForeground } from './lib/status.js'
@@ -140,14 +141,13 @@ async function chooseStarter(target) {
 
   const cliDir = join(fileURLToPath(import.meta.url), '..')
   const goDir = join(cliDir, '../go')
-  const binaryPath = join(goDir, 'desktop-go')
-  const build = spawnSync('go', ['build', '-buildvcs=false', '-o', binaryPath, '.'], { cwd: goDir, stdio: 'inherit' })
-  if (build.status === 0) {
+  try {
+    const binaryPath = ensureGoBinary(goDir)
     const selected = spawnSync(binaryPath, ['--choose-starter', target], { stdio: 'inherit' })
     if (selected.status === 20) return 'nuxt'
     if (selected.status === 21) return 'react'
     if (selected.status === 22) return null
-  }
+  } catch { /* Use the text picker when Go is unavailable. */ }
 
   console.warn('The Bubble Tea starter picker is unavailable; using a text prompt.')
   console.log(`Workspace path: ${target}`)
@@ -170,47 +170,43 @@ async function chooseStarter(target) {
 async function openControlPanel(name) {
   const cliDir = join(fileURLToPath(import.meta.url), '..')
   const goDir = join(cliDir, '../go')
-  const binaryPath = join(goDir, 'desktop-go')
+  let binaryPath
   const readline = await import('node:readline/promises')
 
-  // Compile the Go Control Panel if binary doesn't exist
-  if (!existsSync(binaryPath)) {
-    console.log('Go Control Panel binary not found. Compiling...')
-    try {
-      execSync('go build -buildvcs=false -o desktop-go .', { cwd: goDir, stdio: 'inherit' })
-      console.log('Go Control Panel compiled successfully!')
-    } catch (err) {
-      console.warn('Failed to compile Go Control Panel, falling back to legacy CP:', err.message)
-      const child = spawn(process.execPath, [
-        '-e',
-        `import('./cp.js').then(m => m.runCp(${JSON.stringify(name)}))`
-      ], {
-        cwd: cliDir,
-        stdio: 'inherit',
-      })
-      child.on('exit', async (code) => {
-        if (code === 10) {
-          const { runCreateCli } = await import('./lib/create.js')
-          const workspaceRoot = findWorkspaceRoot()
-          try {
-            await runCreateCli({ workspaceRoot })
-          } catch (err) {
-            console.error('\n✗ Error creating package:', err.message)
-            const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
-            await rl.question('\nPress Enter to return to the control panel...')
-            rl.close()
-          }
-          await openControlPanel(name)
-        } else {
-          process.exit(code ?? 0)
+  try {
+    binaryPath = ensureGoBinary(goDir)
+  } catch (err) {
+    console.warn('Failed to compile Go Control Panel, falling back to legacy CP:', err.message)
+    const child = spawn(process.execPath, [
+      '-e',
+      `import('./cp.js').then(m => m.runCp(${JSON.stringify(name)}))`
+    ], {
+      cwd: cliDir,
+      stdio: 'inherit',
+    })
+    child.on('exit', async (code) => {
+      if (code === 10) {
+        const { runCreateCli } = await import('./lib/create.js')
+        const workspaceRoot = findWorkspaceRoot()
+        try {
+          await runCreateCli({ workspaceRoot })
+        } catch (err) {
+          console.error('\n✗ Error creating package:', err.message)
+          const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
+          await rl.question('\nPress Enter to return to the control panel...')
+          rl.close()
         }
-      })
-      return
-    }
+        await openControlPanel(name)
+      } else {
+        process.exit(code ?? 0)
+      }
+    })
+    return
   }
 
   // Execute Go TUI
   const child = spawn(binaryPath, [], { stdio: 'inherit' })
+  child.on('error', (error) => { console.error(`Cannot start control panel: ${error.message}`); process.exitCode = 1 })
   child.on('exit', async (code) => {
     if (code === 10) {
       const { runCreateCli } = await import('./lib/create.js')

@@ -29,7 +29,9 @@
   },
   "files": [
     "bin",
-    "go"
+    "go/**/*.go",
+    "go/go.mod",
+    "go/go.sum"
   ],
   "dependencies": {
     "neo-blessed": "^0.2.0",
@@ -47,5 +49,8 @@
     "access": "public",
     "tag": "alpha",
     "registry": "https://registry.npmjs.org/"
+  },
+  "scripts": {
+    "test": "node --test tests/*.test.mjs"
   }
 }

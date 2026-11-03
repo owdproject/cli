@@ -8,7 +8,10 @@ import { runCreateCli } from '../bin/lib/create.js'
 import { writeGeneratedFiles } from '../bin/lib/generateTemplate.js'
 import { copyTemplate, scaffoldProject } from '../bin/lib/scaffold.js'
 
-const clientRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../..')
+// Default init tests use a complete local starter fixture, without network access.
+process.env.OWD_TEMPLATE_PATH = fileURLToPath(new URL('./fixtures/distribution/template', import.meta.url))
+
+const fixtures = resolve(dirname(fileURLToPath(import.meta.url)), 'fixtures')
 const ignored = new Set(['node_modules', '.git', '.nuxt', '.output', 'dist', '.data'])
 
 function copySource(from, to) {
@@ -26,8 +29,8 @@ test('create propagates app/module contracts, metadata and registration without 
     mkdirSync(join(root, 'test-bin'))
     writeFileSync(join(root, 'pnpm-workspace.yaml'), "packages:\n  - 'apps/*'\n  - 'packages/*'\n  - 'desktop'\n")
     writeFileSync(join(root, 'desktop/desktop.config.ts'), "export default defineDesktopConfig({ apps: [], modules: [] })\n")
-    copySource(join(clientRoot, 'apps/app-template'), join(root, 'apps/app-template'))
-    copySource(join(clientRoot, 'packages/module-template'), join(root, 'packages/module-template'))
+    copySource(join(fixtures, 'app-template'), join(root, 'apps/app-template'))
+    copySource(join(fixtures, 'module-template'), join(root, 'packages/module-template'))
 
     // Only the external package-manager process is replaced. File generation,
     // substitutions and desktop.config registration run through the real CLI.
@@ -70,9 +73,10 @@ test('create propagates app/module contracts, metadata and registration without 
   }
 })
 
-test('starter generation and init copying retain blueprint guidance and Paper without private paths', () => {
+test('starter generation and init copying retain blueprint guidance and the configured theme without private paths', () => {
   const root = mkdtempSync(join(tmpdir(), 'owd-starter-contracts-'))
   try {
+    const clientRoot = join(fixtures, 'distribution')
     const desktop = JSON.parse(readFileSync(join(clientRoot, 'template/desktop/package.json'), 'utf8'))
     const starter = JSON.parse(readFileSync(join(clientRoot, 'template/package.json'), 'utf8'))
     const workspacePackage = JSON.parse(readFileSync(join(clientRoot, 'package.json'), 'utf8'))
@@ -84,12 +88,12 @@ test('starter generation and init copying retain blueprint guidance and Paper wi
     writeGeneratedFiles(clientRoot, generated, { versions })
     assert.equal(JSON.parse(readFileSync(join(generated, 'package.json'), 'utf8')).name, starter.name)
     copyTemplate(generated, consumer)
-    const blueprintGuidance = readFileSync(join(clientRoot, 'packages/core/template-blueprint/AGENTS.md'), 'utf8')
+    const blueprintGuidance = readFileSync(join(clientRoot, 'template-blueprint/AGENTS.md'), 'utf8')
     assert.equal(readFileSync(join(consumer, 'AGENTS.md'), 'utf8'), blueprintGuidance)
     assert.match(blueprintGuidance, /desktop create app/)
     assert.match(blueprintGuidance, /desktop create module/)
     assert.doesNotMatch(blueprintGuidance, /MineHub|GameAssist|\/home\//)
-    assert.match(readFileSync(join(consumer, 'desktop/desktop.config.ts'), 'utf8'), /@owdproject\/nuxt-theme-paper/)
+    assert.match(readFileSync(join(consumer, 'desktop/desktop.config.ts'), 'utf8'), /@owdproject\/nuxt-theme-ui/)
     assert.equal(JSON.parse(readFileSync(join(consumer, 'desktop/package.json'), 'utf8')).dependencies['@owdproject/nuxt'], versions['@owdproject/nuxt'])
   } finally {
     rmSync(root, { recursive: true, force: true })
