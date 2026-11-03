@@ -187,7 +187,10 @@ async function fetchTopic(topic, org) {
   const res = await fetch(url, { headers })
   if (!res.ok) throw new Error(`GitHub API ${res.status} for ${org}/${topic}`)
   const json = await res.json()
-  return (json.items ?? []).map((repo) => mapGithubRepo(repo, org))
+  // Archived repos are (being) deprecated: never offer them as installable.
+  return (json.items ?? [])
+    .filter((repo) => !repo.archived)
+    .map((repo) => mapGithubRepo(repo, org))
 }
 
 async function fetchUserRepos(user) {
@@ -204,7 +207,7 @@ async function fetchUserRepos(user) {
   if (!res.ok) return []
   const repos = await res.json()
   return repos
-    .filter((repo) => /^(app|theme|module|kit)-/.test(repo.name))
+    .filter((repo) => !repo.archived && /^(app|theme|module|kit)-/.test(repo.name))
     .map((repo) => mapGithubRepo(repo, user))
 }
 
